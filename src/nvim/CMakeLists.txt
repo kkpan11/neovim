@@ -32,7 +32,6 @@ find_package(Iconv REQUIRED)
 find_package(Libuv 1.28.0 REQUIRED)
 find_package(Libvterm 0.3.3 REQUIRED)
 find_package(Lpeg REQUIRED)
-find_package(Msgpack 1.0.0 REQUIRED)
 find_package(Treesitter 0.22.6 REQUIRED)
 find_package(Unibilium 2.0 REQUIRED)
 find_package(UTF8proc REQUIRED)
@@ -41,7 +40,6 @@ target_link_libraries(main_lib INTERFACE
   iconv
   libvterm
   lpeg
-  msgpack
   treesitter
   unibilium
   utf8proc)
@@ -545,7 +543,6 @@ foreach(sfile ${NVIM_SOURCES}
     set(f "${d}/${f}")
     set(r "${d}/${r}")
   endif()
-  set (gf_basename "")
   if ("${ext}" STREQUAL ".c.h")
     continue() # .c.h files are sussy baka, skip
   elseif(${sfile} IN_LIST NVIM_HEADERS)
@@ -554,6 +551,7 @@ foreach(sfile ${NVIM_SOURCES}
     set(gf_h_h "SKIP")
     set(gf_h_h_out "")
   else()
+    set(gf_basename "${r}.c.generated.h")
     set(gf_c_h "${GENERATED_DIR}/${r}.c.generated.h")
     set(gf_h_h "${GENERATED_INCLUDES_DIR}/${r}.h.generated.h")
     set(gf_h_h_out "${gf_h_h}")
@@ -563,7 +561,7 @@ foreach(sfile ${NVIM_SOURCES}
   if(MSVC)
     set(PREPROC_OUTPUT /P /Fi${gf_i} /nologo)
   else()
-    set(PREPROC_OUTPUT -E -o ${gf_i})
+    set(PREPROC_OUTPUT -w -E -o ${gf_i})
   endif()
 
   set(depends "${HEADER_GENERATOR}" "${sfile}" "${LUA_GEN_DEPS}")
