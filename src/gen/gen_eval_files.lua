@@ -6,6 +6,7 @@ local util = require('gen.util')
 local fmt = string.format
 
 local DEP_API_METADATA = arg[1]
+local TAGS_FILE = arg[2]
 local TEXT_WIDTH = 78
 
 --- @class vim.api.metadata
@@ -32,6 +33,7 @@ local LUA_API_RETURN_OVERRIDES = {
   nvim_get_command = 'table<string,vim.api.keyset.command_info>',
   nvim_get_keymap = 'vim.api.keyset.get_keymap[]',
   nvim_get_mark = 'vim.api.keyset.get_mark',
+  nvim_eval_statusline = 'vim.api.keyset.eval_statusline_ret',
 
   -- Can also return table<string,vim.api.keyset.get_hl_info>, however we need to
   -- pick one to get some benefit.
@@ -45,6 +47,7 @@ local LUA_API_RETURN_OVERRIDES = {
   nvim_get_option_info2 = 'vim.api.keyset.get_option_info',
   nvim_parse_cmd = 'vim.api.keyset.parse_cmd',
   nvim_win_get_config = 'vim.api.keyset.win_config',
+  nvim_win_text_height = 'vim.api.keyset.win_text_height_ret',
 }
 
 local LUA_API_KEYSET_OVERRIDES = {
@@ -365,11 +368,11 @@ local function norm_text(x, special)
     x = x:gsub([=[%|?(nvim_[^.()| ]+)%(?%)?%|?]=], 'vim.api.%1')
     -- TODO: Remove backticks when LuaLS resolves: https://github.com/LuaLS/lua-language-server/issues/2889
     -- "|foo|" => "`:help foo`"
-    x = x:gsub([=[|([^ ]+)|]=], '`:help %1`')
+    x = x:gsub([=[|([^%s|]+)|]=], '`:help %1`')
   end
 
   return (
-    x:gsub('|([^ ]+)|', '`%1`')
+    x:gsub('|([^%s|]+)|', '`%1`')
       :gsub('\n*>lua', '\n\n```lua')
       :gsub('\n*>vim', '\n\n```vim')
       :gsub('\n+<$', '\n```')
@@ -795,6 +798,23 @@ local function get_option_meta()
       end
       local r = vim.deepcopy(o) --[[@as vim.option_meta]]
       r.desc = o.desc:gsub('^        ', ''):gsub('\n        ', '\n')
+      if o.full_name == 'eventignorewin' then
+        local events = require('nvim.auevents').events
+        local tags_file = assert(io.open(TAGS_FILE))
+        local tags_text = tags_file:read('*a')
+        tags_file:close()
+        local map_fn = function(k, v)
+          if v then
+            return nil
+          end
+          local tag_pat = ('\n%s\t([^\t]+)\t'):format(k)
+          local link_text = ('|%s|'):format(k)
+          local tags_match = tags_text:match(tag_pat) --- @type string?
+          return tags_match and tags_match ~= 'deprecated.txt' and link_text or nil
+        end
+        local extra_desc = vim.iter(vim.spairs(events)):map(map_fn):join(',\n\t')
+        r.desc = r.desc:gsub('<PLACEHOLDER>', extra_desc)
+      end
       r.defaults = r.defaults or {}
       if r.defaults.meta == nil then
         r.defaults.meta = optinfo[o.full_name].default
