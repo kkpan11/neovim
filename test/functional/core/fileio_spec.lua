@@ -1,6 +1,7 @@
 local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
+local describe, it, before_each, after_each = t.describe, t.it, t.before_each, t.after_each
 local uv = vim.uv
 
 local assert_log = t.assert_log
@@ -30,7 +31,6 @@ local write_file = t.write_file
 local feed_command = n.feed_command
 local skip = t.skip
 local is_os = t.is_os
-local is_ci = t.is_ci
 local set_session = n.set_session
 
 describe('fileio', function()
@@ -48,6 +48,8 @@ describe('fileio', function()
     rmdir('Xtest_startup_swapdir')
     rmdir('Xtest_backupdir')
     rmdir('Xtest_backupdir with spaces')
+    rmdir('Xtest_rename_dir')
+    rmdir('Xtest_rename_dest')
   end)
 
   local args = { '--clean', '--cmd', 'set nofsync directory=Xtest_startup_swapdir' }
@@ -125,7 +127,6 @@ describe('fileio', function()
   end)
 
   it('backup #9709', function()
-    skip(is_ci('cirrus'))
     clear({
       args = {
         '-i',
@@ -151,7 +152,6 @@ describe('fileio', function()
   end)
 
   it('backup with full path #11214', function()
-    skip(is_ci('cirrus'))
     clear()
     mkdir('Xtest_backupdir')
     command('set backup')
@@ -176,7 +176,6 @@ describe('fileio', function()
   end)
 
   it('backup with full path with spaces', function()
-    skip(is_ci('cirrus'))
     clear()
     mkdir('Xtest_backupdir with spaces')
     command('set backup')
@@ -201,7 +200,6 @@ describe('fileio', function()
   end)
 
   it('backup symlinked files #11349', function()
-    skip(is_ci('cirrus'))
     clear()
 
     local initial_content = 'foo'
@@ -222,7 +220,6 @@ describe('fileio', function()
   end)
 
   it('backup symlinked files in first available backupdir #11349', function()
-    skip(is_ci('cirrus'))
     clear()
 
     local initial_content = 'foo'
@@ -267,6 +264,18 @@ describe('fileio', function()
     -- This should not segfault
     command('edit ++enc=utf32 Xtest-u8-int-max')
     assert_alive()
+  end)
+
+  it('rename() replaces an existing file with a directory', function()
+    clear()
+    mkdir('Xtest_rename_dir')
+    write_file('Xtest_rename_dir/file', 'dir_content')
+    write_file('Xtest_rename_dest', 'old_content')
+
+    eq(0, fn.rename('Xtest_rename_dir', 'Xtest_rename_dest'))
+    eq(nil, uv.fs_stat('Xtest_rename_dir'))
+    eq('directory', uv.fs_stat('Xtest_rename_dest').type)
+    eq('dir_content', read_file('Xtest_rename_dest/file'))
   end)
 
   it(':w! does not show "file has been changed" warning', function()

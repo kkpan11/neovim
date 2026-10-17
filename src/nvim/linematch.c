@@ -24,9 +24,7 @@ struct diffcmppath_S {
   size_t df_optimal_choice;
 };
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "linematch.c.generated.h"
-#endif
+#include "linematch.c.generated.h"
 
 static size_t line_len(const mmfile_t *m)
 {
@@ -206,10 +204,10 @@ static void try_possible_paths(const int *df_iters, const size_t *paths, const i
     return;
   }
   size_t bit_place = paths[path_idx];
-  *(choice) |= (1 << bit_place);  // set it to 1
+  *choice |= (1 << bit_place);  // set it to 1
   try_possible_paths(df_iters, paths, npaths, path_idx + 1, choice,
                      diffcmppath, diff_len, ndiffs, diff_blk, iwhite);
-  *(choice) &= ~(1 << bit_place);  // set it to 0
+  *choice &= ~(1 << bit_place);  // set it to 0
   try_possible_paths(df_iters, paths, npaths, path_idx + 1, choice,
                      diffcmppath, diff_len, ndiffs, diff_blk, iwhite);
 }

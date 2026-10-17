@@ -1,17 +1,30 @@
 local t = require('test.testutil')
-local n = require('test.functional.testnvim')()
 
+local describe, it = t.describe, t.it
 local eq = t.eq
 
 describe('glob', function()
-  before_each(n.clear)
-  after_each(n.clear)
-
   local match = function(pattern, str)
-    return n.exec_lua(function()
-      return require('vim.glob').to_lpeg(pattern):match(str) ~= nil
-    end)
+    local matched = require('vim.glob').to_lpeg(pattern):match(str) ~= nil
+    if matched then
+      -- Pruning by this prefix must never discard a path accepted by the matcher.
+      eq(true, vim.startswith(str, vim.glob._get_base(pattern)), pattern)
+    end
+    return matched
   end
+
+  it('vim.glob._get_base()', function()
+    local base = vim.glob._get_base
+    eq('/project/src/', base('/project/src/**/*.lua'))
+    eq('/project/src/', base('/project/src/file.lua'))
+    eq('/project/src[1]/', base([[\/project\/src\[1\]/**/*.lua]]))
+    eq('/project/', base('/project/src*/**/*.lua'))
+    eq('/project/', base('/project/{src,tests}/**/*.lua'))
+    eq('', base('**/*.lua'))
+    eq('/project/', base('/project/src?/file.lua'))
+    eq('/project/', base('/project/[st]rc/file.lua'))
+    eq('', base('file.lua'))
+  end)
 
   describe('glob matching', function()
     it('should match literal strings', function()
@@ -28,6 +41,12 @@ describe('glob', function()
       eq(false, match('.', 'a'))
       eq(true, match('$', '$'))
       eq(true, match('a,b', 'a,b'))
+      eq(true, match('#generated', '#generated'))
+      eq(false, match('#generated', 'generated'))
+      eq(true, match('#generated/*.lua', '#generated/file.lua'))
+      eq(true, match([[\#generated/*.lua]], '#generated/file.lua'))
+      eq(true, match('{#generated,src}/*.lua', '#generated/file.lua'))
+      eq(true, match('#{generated,src}/*.lua', '#src/file.lua'))
       eq(true, match('/dir', '/dir'))
       eq(true, match('dir/', 'dir/'))
       eq(true, match('dir/subdir', 'dir/subdir'))
@@ -73,6 +92,9 @@ describe('glob', function()
       eq(true, match('a*b*[cy]*d*e*', 'axbxcxdxexxx'))
       eq(true, match('a*b*[cy]*d*e*', 'axbxyxdxexxx'))
       eq(true, match('a*b*[cy]*d*e*', 'axbxxxyxdxexxx'))
+      eq(true, match('.ps*1', '.ps1'))
+      eq(true, match('.ps*1', '.psaa1'))
+      eq(false, match('.ps*1', '.ps1a'))
     end)
 
     it('should match ? wildcards', function()

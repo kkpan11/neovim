@@ -3,11 +3,28 @@ local M = {}
 local report_info = vim.health.info
 local report_warn = vim.health.warn
 
+--- Buffer the user was in when they ran `:checkhealth`.
+--- @type integer?
+local cur_bufnr = -1
+
+--- Decorates a buffer-id in a report line, so it is easy for the user to see (and for us to highlight).
+--- @param bufnr integer
+--- @return string
+local function decor_curbuf(bufnr)
+  if bufnr == cur_bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    return ('%d (current buffer, %q)'):format(
+      bufnr,
+      vim.fs.basename(vim.api.nvim_buf_get_name(bufnr))
+    )
+  end
+  return tostring(bufnr)
+end
+
 local function check_log()
   local log = vim.lsp.log
   local current_log_level = log.get_level()
-  local log_level_string = log.levels[current_log_level] ---@type string
-  report_info(string.format('LSP log level : %s', log_level_string))
+  local log_level_string = assert(log.levels[current_log_level])
+  report_info(string.format('LSP log level: %s', log_level_string))
 
   if current_log_level < log.levels.WARN then
     report_warn(
@@ -18,7 +35,7 @@ local function check_log()
     )
   end
 
-  local log_path = vim.lsp.get_log_path()
+  local log_path = log.get_filename()
   report_info(string.format('Log path: %s', log_path))
 
   local log_file = vim.uv.fs_stat(log_path)
@@ -28,10 +45,47 @@ local function check_log()
   report_fn(string.format('Log size: %d KB', log_size / 1000))
 end
 
+local function check_active_features()
+  vim.health.start('vim.lsp: Active Features')
+  if not next(vim.lsp.get_clients()) then
+    report_info('No active clients')
+    return
+  end
+
+  for capname, capability in vim.spairs(vim.lsp._capability.all) do
+    ---@type string[]
+    local buf_infos = {}
+    for bufnr, instance in pairs(capability.active) do
+      local client_info = vim
+        .iter(pairs(instance.client_state))
+        :map(function(client_id)
+          local client = vim.lsp.get_client_by_id(client_id)
+          if client then
+            return string.format('%s (id: %d)', client.name, client.id)
+          else
+            return string.format('unknown (id: %d)', client_id)
+          end
+        end)
+        :join(', ')
+      if client_info == '' then
+        client_info = 'No supported client attached'
+      end
+
+      buf_infos[#buf_infos + 1] = ('  [%s]: %s'):format(decor_curbuf(bufnr), client_info)
+    end
+
+    report_info(table.concat({
+      capname,
+      '- Active buffers:',
+      vim.tbl_isempty(buf_infos) and '  (none)' or table.concat(buf_infos, '\n'),
+    }, '\n'))
+  end
+end
+
 --- @param f function
 --- @return string
 local function func_tostring(f)
-  local info = debug.getinfo(f, 'S')
+  local info = assert(debug.getinfo(f, 'S'))
   return ('<function %s:%s>'):format(info.source, info.linedefined)
 end
 
@@ -59,19 +113,19 @@ local function check_active_clients()
       else
         dirs_info = string.format(
           '- Root directory: %s',
+          -- vim.fs.relpath does not prepend '~/' while fnamemodify does
           client.root_dir and vim.fn.fnamemodify(client.root_dir, ':~')
         ) or nil
       end
       report_info(table.concat({
         string.format('%s (id: %d)', client.name, client.id),
+        ('- Attached buffers: %s'):format(
+          vim.iter(pairs(client.attached_buffers)):map(decor_curbuf):join(', ')
+        ),
         string.format('- Version: %s', server_version),
         dirs_info,
         string.format('- Command: %s', cmd),
         string.format('- Settings: %s', vim.inspect(client.settings, { newline = '\n  ' })),
-        string.format(
-          '- Attached buffers: %s',
-          vim.iter(pairs(client.attached_buffers)):map(tostring):join(', ')
-        ),
       }, '\n'))
     end
   else
@@ -79,9 +133,8 @@ local function check_active_clients()
   end
 end
 
+-- Non-LSP filewatchers are also checked in: runtime/lua/vim/health/health.lua
 local function check_watcher()
-  vim.health.start('vim.lsp: File Watcher')
-
   -- Only run the check if file watching has been enabled by a client.
   local clients = vim.lsp.get_clients()
   if
@@ -94,18 +147,17 @@ local function check_watcher()
         'dynamicRegistration'
       )
       local has_dynamic_capability =
-        client.dynamic_capabilities:get(vim.lsp.protocol.Methods.workspace_didChangeWatchedFiles)
+        client.dynamic_capabilities:get('workspace/didChangeWatchedFiles')
       return has_capability == nil
         or has_dynamic_capability == nil
         or client.workspace_folders == nil
     end)
   then
-    report_info('file watching "(workspace/didChangeWatchedFiles)" disabled on all clients')
+    report_info('Filewatchers "(workspace/didChangeWatchedFiles)" disabled on all clients')
     return
   end
 
   local watchfunc = vim.lsp._watchfiles._watchfunc
-  assert(watchfunc)
   local watchfunc_name --- @type string
   if watchfunc == vim._watch.watch then
     watchfunc_name = 'libuv-watch'
@@ -114,20 +166,21 @@ local function check_watcher()
   elseif watchfunc == vim._watch.inotify then
     watchfunc_name = 'inotify'
   else
-    local nm = debug.getinfo(watchfunc, 'S').source
-    watchfunc_name = string.format('Custom (%s)', nm)
+    local info = assert(debug.getinfo(watchfunc, 'S'))
+    watchfunc_name = string.format('Custom (%s)', info.source)
   end
 
-  report_info('File watch backend: ' .. watchfunc_name)
+  report_info('Filewatch backend: ' .. watchfunc_name)
   if watchfunc_name == 'libuv-watchdirs' then
     report_warn('libuv-watchdirs has known performance issues. Consider installing inotify-tools.')
   end
 end
 
 local function check_position_encodings()
-  vim.health.start('vim.lsp: Position Encodings')
   local clients = vim.lsp.get_clients()
-  if next(clients) then
+  if not next(clients) then
+    report_info('Position encodings: No active clients')
+  else
     local position_encodings = {} ---@type table<integer, table<string, integer[]>>
     for _, client in pairs(clients) do
       for bufnr in pairs(client.attached_buffers) do
@@ -155,8 +208,9 @@ local function check_position_encodings()
     end
 
     if #buffers > 0 then
-      local lines =
-        { 'Found buffers attached to multiple clients with different position encodings.' }
+      local lines = {
+        'Position encodings: Found buffers attached to multiple clients with different position encodings.',
+      }
       for _, bufnr in ipairs(buffers) do
         local encodings = position_encodings[bufnr]
         local parts = {}
@@ -173,15 +227,15 @@ local function check_position_encodings()
         'Use the positionEncodings client capability to ensure all clients use the same position encoding'
       )
     else
-      report_info('No buffers contain mixed position encodings')
+      report_info('Position encodings: No buffers contain mixed position encodings')
     end
-  else
-    report_info('No active clients')
   end
 end
 
 local function check_enabled_configs()
   vim.health.start('vim.lsp: Enabled Configurations')
+
+  local known_filetypes = vim.filetype._get_known_filetypes()
 
   for name in vim.spairs(vim.lsp._enabled_configs) do
     local config = vim.lsp.config[name]
@@ -198,7 +252,7 @@ local function check_enabled_configs()
         local v_str --- @type string?
         if k == 'name' then
           v_str = nil
-        elseif k == 'filetypes' or (k == 'root_markers' and type(v[1]) == 'string') then
+        elseif k == 'filetypes' then
           v_str = table.concat(v, ', ')
         elseif type(v) == 'function' then
           v_str = func_tostring(v)
@@ -208,6 +262,18 @@ local function check_enabled_configs()
 
         if k == 'cmd' and type(v) == 'table' and vim.fn.executable(v[1]) == 0 then
           report_warn(("'%s' is not executable. Configuration will not be used."):format(v[1]))
+        end
+
+        if k == 'filetypes' and type(v) == 'table' then
+          for _, filetype in
+            ipairs(v --[[@as string[] ]])
+          do
+            if not known_filetypes[filetype] then
+              report_warn(
+                ("Unknown filetype '%s' (Hint: filename extension != filetype)."):format(filetype)
+              )
+            end
+          end
         end
 
         if v_str then
@@ -222,11 +288,27 @@ end
 
 --- Performs a healthcheck for LSP
 function M.check()
+  cur_bufnr = vim.fn.bufnr('#')
+
   check_log()
-  check_active_clients()
-  check_enabled_configs()
   check_watcher()
   check_position_encodings()
+  check_active_features()
+  check_active_clients()
+  check_enabled_configs()
+
+  --- Highlight the "current buffer" token emitted by `decor_curbuf`.
+  vim.api.nvim_create_autocmd('FileType', {
+    pattern = 'checkhealth',
+    once = true,
+    callback = function()
+      vim.cmd([[
+        silent! syntax clear healthLspCurBuf
+        syntax match healthLspCurBuf /\d\+ (current buffer[^)]*)/
+        highlight default link healthLspCurBuf Visual
+      ]])
+    end,
+  })
 end
 
 return M

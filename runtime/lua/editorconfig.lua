@@ -1,9 +1,24 @@
 --- @brief
---- Nvim supports EditorConfig. When a file is opened, after running |ftplugin|s
---- and |FileType| autocommands, Nvim searches all parent directories of that file
---- for ".editorconfig" files, parses them, and applies any properties that match
---- the opened file. Think of it like 'modeline' for an entire (recursive)
---- directory. For more information see https://editorconfig.org/.
+--- EditorConfig is like 'modeline' for an entire (recursive) directory. When a file is opened,
+--- after running |ftplugin|s and |FileType| autocommands, the EditorConfig feature searches all
+--- parent directories of that file for `.editorconfig` files, parses them, and applies their
+--- properties. For more information see https://editorconfig.org/.
+---
+--- Example `.editorconfig` file:
+--- ```ini
+--- root = true
+---
+--- [*]
+--- charset = utf-8
+--- end_of_line = lf
+--- indent_size = 4
+--- indent_style = space
+--- max_line_length = 42
+--- trim_trailing_whitespace = true
+---
+--- [*.{diff,md}]
+--- trim_trailing_whitespace = false
+--- ```
 
 --- @brief [g:editorconfig]() [b:editorconfig]()
 ---
@@ -42,7 +57,9 @@
 ---
 --- The following properties are supported by default:
 
---- @type table<string,fun(bufnr: integer, val: string, opts?: table)>
+local nvim_on = require('vim._core.util').nvim_on
+
+--- @type table<string,fun(bufnr: integer, val: string, opts: table<string,string>)>
 local properties = {}
 
 --- Modified version of the builtin assert that does not include error position information
@@ -65,8 +82,9 @@ end
 --- If "true", then stop searching for `.editorconfig` files in parent
 --- directories. This property must be at the top-level of the
 --- `.editorconfig` file (i.e. it must not be within a glob section).
+--- It only controls the search and is excluded from property callbacks and [b:editorconfig].
 function properties.root()
-  -- Unused
+  -- Documentation only. The parser handles root separately.
 end
 
 --- One of `"utf-8"`, `"utf-8-bom"`, `"latin1"`, `"utf-16be"`, or `"utf-16le"`.
@@ -115,7 +133,7 @@ function properties.indent_size(bufnr, val, opts)
     vim.bo[bufnr].shiftwidth = 0
     vim.bo[bufnr].softtabstop = 0
   else
-    local n = assert(tonumber(val), 'indent_size must be a number')
+    local n = assert(vim._tointeger(val), 'indent_size must be an integer')
     vim.bo[bufnr].shiftwidth = n
     vim.bo[bufnr].softtabstop = -1
     if not opts.tab_width then
@@ -126,17 +144,17 @@ end
 
 --- The display size of a single tab character. Sets the 'tabstop' option.
 function properties.tab_width(bufnr, val)
-  vim.bo[bufnr].tabstop = assert(tonumber(val), 'tab_width must be a number')
+  vim.bo[bufnr].tabstop = assert(vim._tointeger(val), 'tab_width must be an integer')
 end
 
 --- A number indicating the maximum length of a single
 --- line. Sets the 'textwidth' option.
 function properties.max_line_length(bufnr, val)
-  local n = tonumber(val)
+  local n = vim._tointeger(val)
   if n then
     vim.bo[bufnr].textwidth = n
   else
-    assert(val == 'off', 'max_line_length must be a number or "off"')
+    assert(val == 'off', 'max_line_length must be an integer or "off"')
     vim.bo[bufnr].textwidth = 0
   end
 end
@@ -148,21 +166,21 @@ function properties.trim_trailing_whitespace(bufnr, val)
     'trim_trailing_whitespace must be either "true" or "false"'
   )
   if val == 'true' then
-    vim.api.nvim_create_autocmd('BufWritePre', {
-      group = 'nvim.editorconfig',
-      buffer = bufnr,
-      callback = function()
-        local view = vim.fn.winsaveview()
-        vim.api.nvim_command('silent! undojoin')
-        vim.api.nvim_command('silent keepjumps keeppatterns %s/\\s\\+$//e')
-        vim.fn.winrestview(view)
-      end,
-    })
+    nvim_on('BufWritePre', 'nvim.editorconfig', { buf = bufnr }, function()
+      local mode = vim.api.nvim_get_mode().mode
+      if mode:sub(1, 1) == 'i' or mode:sub(1, 1) == 'R' or mode:sub(1, 2) == 'ni' then
+        return
+      end
+      local view = vim.fn.winsaveview()
+      vim.api.nvim_command('silent! undojoin')
+      vim.api.nvim_command('silent keepjumps keeppatterns %s/\\s\\+$//e')
+      vim.fn.winrestview(view)
+    end)
   else
     vim.api.nvim_clear_autocmds({
       event = 'BufWritePre',
       group = 'nvim.editorconfig',
-      buffer = bufnr,
+      buf = bufnr,
     })
   end
 end
@@ -177,14 +195,9 @@ function properties.insert_final_newline(bufnr, val)
   -- so only change 'endofline' right before writing the file
   local endofline = val == 'true'
   if vim.bo[bufnr].endofline ~= endofline then
-    vim.api.nvim_create_autocmd('BufWritePre', {
-      group = 'nvim.editorconfig',
-      buffer = bufnr,
-      once = true,
-      callback = function()
-        vim.bo[bufnr].endofline = endofline
-      end,
-    })
+    nvim_on('BufWritePre', 'nvim.editorconfig', { buf = bufnr, once = true }, function()
+      vim.bo[bufnr].endofline = endofline
+    end)
   end
 end
 
@@ -241,7 +254,7 @@ local function parse_line(line)
   end
 
   --- @type string?
-  local glob = (line:match('%b[]') or ''):match('^%s*%[(.*)%]%s*$')
+  local glob = line:match('^%s*%[(.*)%]%s*$')
   if glob then
     return glob
   end
@@ -255,13 +268,16 @@ end
 --- Parse options from an `.editorconfig` file
 --- @param filepath string File path of the file to apply EditorConfig settings to
 --- @param dir string Current directory
---- @return table<string,string|boolean> Table of options to apply to the given file
+--- @return table<string,string> options to apply to the given file
+--- @return boolean is_root Whether to stop searching parent directories
 local function parse(filepath, dir)
   local pat --- @type vim.regex?
-  local opts = {} --- @type table<string,string|boolean>
+  local opts = {} --- @type table<string,string>
+  local is_root = false
   local f = io.open(dir .. '/.editorconfig')
   if f then
     for line in f:lines() do
+      --- @cast line string
       local glob, key, val = parse_line(line)
       if glob then
         glob = glob:find('/') and (dir .. '/' .. glob:gsub('^/', '')) or ('**/' .. glob)
@@ -275,7 +291,7 @@ local function parse(filepath, dir)
       elseif key ~= nil and val ~= nil then
         if key == 'root' then
           assert(val == 'true' or val == 'false', 'root must be either "true" or "false"')
-          opts.root = val == 'true'
+          is_root = val == 'true'
         elseif pat and pat:match_str(filepath) then
           opts[key] = val
         end
@@ -283,7 +299,7 @@ local function parse(filepath, dir)
     end
     f:close()
   end
-  return opts
+  return opts, is_root
 end
 
 local M = {}
@@ -293,38 +309,38 @@ M.properties = properties
 
 --- @private
 --- Configure the given buffer with options from an `.editorconfig` file
---- @param bufnr integer Buffer number to configure
-function M.config(bufnr)
-  bufnr = bufnr or vim.api.nvim_get_current_buf()
-  if not vim.api.nvim_buf_is_valid(bufnr) then
+--- @param buf integer Buffer number to configure
+function M.config(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(buf) then
     return
   end
 
-  local path = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
-  if vim.bo[bufnr].buftype ~= '' or not vim.bo[bufnr].modifiable or path == '' then
+  local path = vim.fs.normalize(vim.api.nvim_buf_get_name(buf))
+  if vim.bo[buf].buftype ~= '' or not vim.bo[buf].modifiable or path == '' then
     return
   end
 
-  local opts = {} --- @type table<string,string|boolean>
+  local opts = {} --- @type table<string,string>
   for parent in vim.fs.parents(path) do
-    for k, v in pairs(parse(path, parent)) do
+    local parent_opts, is_root = parse(path, parent)
+    for k, v in pairs(parent_opts) do
       if opts[k] == nil then
         opts[k] = v
       end
     end
 
-    if opts.root then
+    if is_root then
       break
     end
   end
 
-  local applied = {} --- @type table<string,string|boolean>
+  local applied = {} --- @type table<string,string>
   for opt, val in pairs(opts) do
     if val ~= 'unset' then
       local func = M.properties[opt]
       if func then
-        --- @type boolean, string?
-        local ok, err = pcall(func, bufnr, val, opts)
+        local ok, err = pcall(func, buf, val, opts)
         if ok then
           applied[opt] = val
         else
@@ -334,7 +350,7 @@ function M.config(bufnr)
     end
   end
 
-  vim.b[bufnr].editorconfig = applied
+  vim.b[buf].editorconfig = applied
 end
 
 return M

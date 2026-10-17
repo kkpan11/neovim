@@ -49,15 +49,15 @@ local heading_queries = {
 --- Extract headings from buffer
 --- @param bufnr integer buffer to extract headings from
 --- @return TS.Heading[]
-local get_headings = function(bufnr)
+local function get_headings(bufnr)
   local lang = ts.language.get_lang(vim.bo[bufnr].filetype)
   if not lang then
     return {}
   end
-  local parser = assert(ts.get_parser(bufnr, lang, { error = false }))
-  local query = ts.query.parse(lang, heading_queries[lang])
+  local parser = assert(ts.get_parser(bufnr, lang))
+  local query = ts.query.parse(lang, assert(heading_queries[lang]))
   local root = parser:parse()[1]:root()
-  local headings = {}
+  local headings = {} --- @type TS.Heading[]
   for id, node, _, _ in query:iter_captures(root, bufnr) do
     local text = ts.get_node_text(node, bufnr)
     local row, col = node:start()
@@ -69,22 +69,23 @@ local get_headings = function(bufnr)
         -- ignore tabular material
         or (id == 4 and (text:find('\t') or text:find('  ')))
         -- ignore tag-only headings
-        or (node:child_count() == 1 and node:child(0):type() == 'tag')
+        or (node:child_count() == 1 and assert(node:child(0)):type() == 'tag')
     end
     if not skip then
-      table.insert(headings, {
+      headings[#headings + 1] = {
         bufnr = bufnr,
         lnum = row + 1,
         text = text,
         level = id,
-      })
+      }
     end
   end
   return headings
 end
 
+--- @param qf_height? integer height of loclist window
 --- Shows an Outline (table of contents) of the current buffer, in the loclist.
-function M.show_toc()
+function M.show_toc(qf_height)
   local bufnr = api.nvim_get_current_buf()
   local bufname = api.nvim_buf_get_name(bufnr)
   local headings = get_headings(bufnr)
@@ -94,11 +95,11 @@ function M.show_toc()
   -- add indentation for nicer list formatting
   for _, heading in pairs(headings) do
     -- Quickfix trims whitespace, so use non-breaking space instead
-    heading.text = ('\194\160'):rep(heading.level - 1) .. heading.text
+    heading.text = ('\194\160'):rep((heading.level - 1) * 2) .. heading.text
   end
-  vim.fn.setloclist(0, headings, ' ')
+  vim.fn.setloclist(0, headings --[[@as vim.quickfix.entry[] ]], ' ')
   vim.fn.setloclist(0, {}, 'a', { title = 'Table of contents' })
-  vim.cmd.lopen()
+  vim.cmd.lopen(qf_height)
   vim.w.qf_toc = bufname
   -- reload syntax file after setting qf_toc variable
   vim.bo.filetype = 'qf'

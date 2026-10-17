@@ -2,10 +2,15 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <unibilium.h>
+
+#ifdef HAVE_UNIBILIUM
+# include <unibilium.h>
+#endif
+
 #include <uv.h>
 
 #include "nvim/event/defs.h"
+#include "nvim/tui/terminfo_defs.h"
 #include "nvim/tui/tui_defs.h"
 #include "nvim/types_defs.h"
 
@@ -111,6 +116,7 @@ typedef enum {
   TERMKEY_TYPE_MODEREPORT,
   TERMKEY_TYPE_DCS,
   TERMKEY_TYPE_OSC,
+  TERMKEY_TYPE_APC,
   // add other recognised types here
 
   TERMKEY_TYPE_UNKNOWN_CSI = -1,
@@ -200,7 +206,7 @@ typedef enum {
 typedef struct {
   TermKey *tk;
 
-  unibi_term *unibi;  // only valid until first 'start' call
+  TerminfoEntry *ti;  // not used after first 'start' call
 
   struct trie_node *root;
 

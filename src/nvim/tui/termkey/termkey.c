@@ -21,9 +21,7 @@
 # include <io.h>
 #endif
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "tui/termkey/termkey.c.generated.h"
-#endif
+#include "tui/termkey/termkey.c.generated.h"
 
 #ifdef _MSC_VER
 # define strcaseeq(a, b) (_stricmp(a, b) == 0)
@@ -31,7 +29,7 @@
 # define strcaseeq(a, b) (strcasecmp(a, b) == 0)
 #endif
 
-struct TermKeyDriver termkey_driver_ti = {
+static struct TermKeyDriver termkey_driver_ti = {
   .name = "terminfo",
 
   .new_driver = new_driver_ti,
@@ -43,7 +41,7 @@ struct TermKeyDriver termkey_driver_ti = {
   .peekkey = peekkey_ti,
 };
 
-struct TermKeyDriver termkey_driver_csi = {
+static struct TermKeyDriver termkey_driver_csi = {
   .name = "CSI",
 
   .new_driver = new_driver_csi,
@@ -182,6 +180,9 @@ static void print_key(TermKey *tk, TermKeyKey *key)
   case TERMKEY_TYPE_OSC:
     fprintf(stderr, "Operating System Control");
     break;
+  case TERMKEY_TYPE_APC:
+    fprintf(stderr, "Application Program Command");
+    break;
   case TERMKEY_TYPE_UNKNOWN_CSI:
     fprintf(stderr, "unknown CSI\n");
     break;
@@ -231,7 +232,8 @@ TermKeyResult termkey_interpret_string(TermKey *tk, const TermKeyKey *key, const
   }
 
   if (key->type != TERMKEY_TYPE_DCS
-      && key->type != TERMKEY_TYPE_OSC) {
+      && key->type != TERMKEY_TYPE_OSC
+      && key->type != TERMKEY_TYPE_APC) {
     return TERMKEY_RES_NONE;
   }
 
@@ -355,7 +357,7 @@ static TermKey *termkey_alloc(void)
   return tk;
 }
 
-static int termkey_init(TermKey *tk, const char *term)
+static int termkey_init(TermKey *tk, TerminfoEntry *term)
 {
   tk->buffer = xmalloc(tk->buffsize);
   tk->keynames = xmalloc(sizeof(tk->keynames[0]) * (size_t)tk->nkeynames);
@@ -431,7 +433,7 @@ abort_free_keynames:
   return 0;
 }
 
-TermKey *termkey_new_abstract(const char *term, int flags)
+TermKey *termkey_new_abstract(TerminfoEntry *term, int flags)
 {
   TermKey *tk = termkey_alloc();
   if (!tk) {
@@ -910,6 +912,14 @@ static TermKeyResult peekkey_simple(TermKey *tk, TermKeyKey *key, int force, siz
 
     switch (metakey_result) {
     case TERMKEY_RES_KEY:
+      if (key->event == TERMKEY_EVENT_REPEAT || key->event == TERMKEY_EVENT_RELEASE) {
+        // A repeat or release event's modifiers are encoded in its escape sequence, so
+        // a preceding Esc cannot be its Alt modifier, and can only be an <Esc> press.
+        key->event = TERMKEY_EVENT_PRESS;
+        (*tk->method.emit_codepoint)(tk, b0, key);
+        *nbytep = 1;
+        return TERMKEY_RES_KEY;
+      }
       key->modifiers |= TERMKEY_KEYMOD_ALT;
       (*nbytep)++;
       break;
@@ -1269,6 +1279,9 @@ size_t termkey_strfkey(TermKey *tk, char *buffer, size_t len, TermKeyKey *key, T
     break;
   case TERMKEY_TYPE_OSC:
     l = (size_t)snprintf(buffer + pos, len - pos, "OSC");
+    break;
+  case TERMKEY_TYPE_APC:
+    l = (size_t)snprintf(buffer + pos, len - pos, "APC");
     break;
   case TERMKEY_TYPE_UNKNOWN_CSI:
     l = (size_t)snprintf(buffer + pos, len - pos, "CSI %c", key->code.number & 0xff);

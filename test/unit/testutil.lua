@@ -4,8 +4,8 @@ local Set = require('test.unit.set')
 local Preprocess = require('test.unit.preprocess')
 local t_global = require('test.testutil')
 local paths = t_global.paths
-local assert = require('luassert')
-local say = require('say')
+local assert = require('test.assert')
+local harness = require('test.harness')
 
 local check_cores = t_global.check_cores
 local dedent = t_global.dedent
@@ -13,6 +13,8 @@ local neq = t_global.neq
 local map = vim.tbl_map
 local eq = t_global.eq
 local trim = vim.trim
+
+local testutil_source = debug.getinfo(1, 'S').source
 
 -- add some standard header locations
 for _, p in ipairs(paths.include_paths) do
@@ -103,7 +105,6 @@ local init = only_separate(function()
     c.func(unpack(c.args))
   end
   libnvim.event_init()
-  libnvim.early_init(nil)
   if child_calls_mod then
     for _, c in ipairs(child_calls_mod) do
       c.func(unpack(c.args))
@@ -146,6 +147,14 @@ local function filter_complex_blocks(body)
         or string.find(line, '_Float')
         or string.find(line, '__s128')
         or string.find(line, '__u128')
+        or string.find(line, '__SVFloat32_t')
+        or string.find(line, '__SVFloat64_t')
+        or string.find(line, '__SVBool_t')
+        or string.find(line, '__f32x4_t')
+        or string.find(line, '__f64x2_t')
+        or string.find(line, '__sv_f32_t')
+        or string.find(line, '__sv_f64_t')
+        or string.find(line, 'extern __typeof')
         or string.find(line, 'msgpack_zone_push_finalizer')
         or string.find(line, 'msgpack_unpacker_reserve_buffer')
         or string.find(line, 'value_init_')
@@ -156,6 +165,10 @@ local function filter_complex_blocks(body)
         -- used by macOS headers
         or string.find(line, 'typedef enum : ')
         or string.find(line, 'mach_vm_range_recipe')
+        or string.find(line, 'ipc_info_object_type_t')
+        or string.find(line, '__Reply__mach_port_kobject_t')
+        -- C11 keyword, not understood by LuaJIT FFI. Emitted by some libc headers (e.g. ARM/clang glibc).
+        or string.find(line, '_Static_assert', 1, true)
       )
     then
       -- Remove GCC's extension keyword which is just used to disable warnings.
@@ -192,8 +205,10 @@ local function is_child_cdefs()
   return os.getenv('NVIM_TEST_MAIN_CDEFS') ~= '1'
 end
 
--- use this helper to import C files, you can pass multiple paths at once,
--- this helper will return the C namespace of the nvim library.
+--- use this helper to import C files, you can pass multiple paths at once,
+--- this helper will return the C namespace of the nvim library.
+---
+--- @param ... string
 local function cimport(...)
   local previous_defines --- @type string
   local preprocess_cache --- @type table<string,string>
@@ -345,6 +360,9 @@ local function alloc_log_new()
         end
       end
     end
+    -- JIT-compiled FFI calls cannot call back into Lua, so disable JIT.
+    -- Ref: https://luajit.org/ext_ffi_semantics.html#callback
+    jit.off()
   end
 
   log.set_mocks = child_call(log.set_mocks)
@@ -524,19 +542,6 @@ if os.getenv('NVIM_TEST_PRINT_SYSCALLS') == '1' then
   end
 end
 
-local function just_fail(_)
-  return false
-end
-say:set('assertion.just_fail.positive', '%s')
-say:set('assertion.just_fail.negative', '%s')
-assert:register(
-  'assertion',
-  'just_fail',
-  just_fail,
-  'assertion.just_fail.positive',
-  'assertion.just_fail.negative'
-)
-
 local hook_fnamelen = 30
 local hook_sfnamelen = 30
 local hook_numlen = 5
@@ -661,6 +666,16 @@ local debug_log = only_separate(function(...)
   return _debug_log(...)
 end)
 
+local function exception_handler(err)
+  if type(err) == 'table' and err.__harness_pending then
+    --- @cast err test.harness.ErrorPayload
+    return err
+  end
+  local traceback = harness.build_error_traceback(testutil_source) or debug.traceback('', 2)
+  local message = harness.format_error_value(err)
+  return message .. '\nchild ' .. traceback
+end
+
 local function itp_child(wr, func)
   --- @param s string
   _debug_log = function(s)
@@ -671,7 +686,7 @@ local function itp_child(wr, func)
   if status then
     collectgarbage('stop')
     child_sethook(wr)
-    status, result = pcall(func)
+    status, result = xpcall(func, exception_handler)
     debug.sethook()
   end
   sc.write(wr, trace_end_msg)
@@ -755,7 +770,7 @@ local function check_child_err(rd)
       end
     end
     if err ~= '' then
-      assert.just_fail(err)
+      error(err, 0)
     end
   end
 end
@@ -796,7 +811,7 @@ local function gen_itp(it)
     end
 
     -- Pre-emptively calculating error location, wasteful, ugh!
-    -- But the way this code messes around with busted implies the real location is strictly
+    -- But the way this code wraps the local harness means the real location is strictly
     -- not available in the parent when an actual error occurs. so we have to do this here.
     local location = debug.traceback()
     it(name, function()

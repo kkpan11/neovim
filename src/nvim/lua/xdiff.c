@@ -37,9 +37,7 @@ typedef struct {
   bool iwhite;
 } hunkpriv_t;
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "lua/xdiff.c.generated.h"
-#endif
+#include "lua/xdiff.c.generated.h"
 
 static void lua_pushhunk(lua_State *lstate, long start_a, long count_a, long start_b, long count_b)
 {
@@ -164,9 +162,7 @@ static int call_on_hunk_cb(int start_a, int count_a, int start_b, int count_b, v
   lua_pushinteger(lstate, count_b);
 
   if (lua_pcall(lstate, 4, 1, 0) != 0) {
-    api_set_error(err, kErrorTypeException,
-                  "error running function on_hunk: %s",
-                  lua_tostring(lstate, -1));
+    api_set_error(err, kErrorTypeException, "on_hunk: %s", lua_tostring(lstate, -1));
     return -1;
   }
 
@@ -200,7 +196,6 @@ static NluaXdiffMode process_xdl_diff_opts(lua_State *lstate, xdemitconf_t *cfg,
 {
   Dict(xdl_diff) opts = KEYDICT_INIT;
   char *err_param = NULL;
-  KeySetLink *KeyDict_xdl_diff_get_field(const char *str, size_t len);
   nlua_pop_keydict(lstate, &opts, KeyDict_xdl_diff_get_field, &err_param, NULL, err);
 
   NluaXdiffMode mode = kNluaXdiffModeUnified;

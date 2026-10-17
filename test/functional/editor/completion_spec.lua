@@ -1,4 +1,6 @@
 local t = require('test.testutil')
+local describe, it, before_each, finally = t.describe, t.it, t.before_each, t.finally
+local pcall_err = t.pcall_err
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
@@ -26,6 +28,15 @@ describe('completion', function()
     screen:add_extra_attr_ids {
       [100] = { foreground = Screen.colors.Gray0, background = Screen.colors.Yellow },
       [101] = { background = Screen.colors.Gray0 },
+      [102] = { foreground = Screen.colors.SeaGreen },
+    }
+  end)
+
+  it('ctrl-x_ctrl-f completes Windows drive letter', function()
+    t.skip(not t.is_os('win'), 'N/A for non-Windows')
+    feed('iblablaC:/W<C-x><C-f>')
+    screen:expect {
+      any = [[C:\Windows\]],
     }
   end)
 
@@ -54,10 +65,16 @@ describe('completion', function()
     it('returns expected dict in normal completion', function()
       feed('ifoo<ESC>o<C-x><C-n>')
       eq('foo', eval('getline(2)'))
-      eq(
-        { word = 'foo', abbr = '', menu = '', info = '', kind = '', user_data = '' },
-        eval('v:completed_item')
-      )
+      eq({
+        word = 'foo',
+        abbr = '',
+        menu = '',
+        info = '',
+        kind = '',
+        user_data = '',
+        abbr_hlgroup = '',
+        kind_hlgroup = '',
+      }, eval('v:completed_item'))
     end)
     it('is readonly', function()
       screen:try_resize(80, 8)
@@ -94,6 +111,8 @@ describe('completion', function()
         menu = 'baz',
         info = 'foobar',
         kind = 'foobaz',
+        abbr_hlgroup = '',
+        kind_hlgroup = '',
         user_data = '',
       }, eval('v:completed_item'))
     end)
@@ -256,6 +275,97 @@ describe('completion', function()
       command('setlocal nomodified')
       feed('i<C-r>=TestComplete()<CR><ESC>')
       eq(0, eval('&l:modified'))
+    end)
+
+    describe('"preselect"', function()
+      it('respects "preselect" of complete items', function()
+        source([[
+          function! TestComplete() abort
+            call complete(1, g:comp_items)
+            return ''
+          endfunction
+        ]])
+        local function complete(items)
+          api.nvim_set_var('comp_items', items)
+          feed('<Esc>S<C-r>=TestComplete()<CR>')
+        end
+        local items = {
+          { word = 'aaa' },
+          { word = 'bbb' },
+          { word = 'ccc', preselect = true },
+          { word = 'ddd' },
+        }
+        command('set completeopt=menuone,preselect')
+        complete(items)
+        screen:expect([[
+          ccc^                                                         |
+          {4:aaa            }{1:                                             }|
+          {4:bbb            }{1:                                             }|
+          {12:ccc            }{1:                                             }|
+          {4:ddd            }{1:                                             }|
+          {1:~                                                           }|*2
+          {5:-- INSERT --}                                                |
+        ]])
+
+        -- scrolls pum when preselected item is far down
+        command('set pumheight=5')
+        local many = {} ---@type table[]
+        for i = 0, 19 do
+          many[i + 1] = { word = 'item' .. i }
+        end
+        many[16].preselect = true ---@type boolean
+        complete(many)
+        screen:expect([[
+          item15^                                                      |
+          {4:item13         }{12: }{1:                                            }|
+          {4:item14         }{12: }{1:                                            }|
+          {12:item15          }{1:                                            }|
+          {4:item16         }{101: }{1:                                            }|
+          {4:item17         }{12: }{1:                                            }|
+          {1:~                                                           }|
+          {5:-- INSERT --}                                                |
+        ]])
+
+        -- preselected item is selected but not inserted with "noselect"
+        command('set completeopt=menuone,noselect,preselect pumheight=0')
+        complete(items)
+        screen:expect([[
+          ^                                                            |
+          {4:aaa            }{1:                                             }|
+          {4:bbb            }{1:                                             }|
+          {12:ccc            }{1:                                             }|
+          {4:ddd            }{1:                                             }|
+          {1:~                                                           }|*2
+          {5:-- INSERT --}                                                |
+        ]])
+
+        -- selects the first preselected item that still matches
+        complete({
+          { word = 'aaa', preselect = true },
+          { word = 'abb' },
+          { word = 'abc', preselect = true },
+        })
+        feed('ab<C-Y>')
+        eq('abc', api.nvim_get_current_line())
+
+        -- without "preselect" in 'completeopt' the attribute is ignored
+        command('set completeopt-=preselect')
+        complete(items)
+        feed('<C-N><C-Y>')
+        eq('aaa', api.nvim_get_current_line())
+      end)
+
+      it('does not insert text if noinsert', function()
+        source([[
+          function! TestComplete() abort
+            call complete(1, [{'word': 'aaa', 'preselect': v:true}, {'word': 'bbb'}])
+            return ''
+          endfunction
+        ]])
+        command('set completeopt=menuone,noinsert,preselect')
+        feed('i<C-r>=TestComplete()<CR>')
+        eq('', api.nvim_get_current_line())
+      end)
     end)
   end)
 
@@ -952,6 +1062,27 @@ describe('completion', function()
     end
   end)
 
+  it('cmdline completion for :restart', function()
+    eq('qall', fn.getcompletion('restart +qa', 'cmdline')[1])
+    eq('edit', fn.getcompletion('restart +qall ed', 'cmdline')[1])
+    eq('edit', fn.getcompletion('restart ed', 'cmdline')[1])
+  end)
+
+  it('cmdline completion for :*cd family shows dirs only', function()
+    local dir = 'Xtest-cd-compl/'
+    local subdir1 = dir .. 'subdir1/'
+    local subdir2 = dir .. 'subdir2/'
+    finally(function()
+      n.rmdir(dir)
+    end)
+    fn.mkdir(subdir1, 'p')
+    fn.mkdir(subdir2, 'p')
+    fn.writefile({ '' }, dir .. 'file')
+    for _, cmd in ipairs({ 'cd', 'lcd', 'tcd', 'bcd' }) do
+      eq({ subdir1, subdir2 }, fn.getcompletion(cmd .. ' ' .. dir, 'cmdline'))
+    end
+  end)
+
   describe('from the commandline window', function()
     it('is cleared after CTRL-C', function()
       feed('q:')
@@ -976,12 +1107,11 @@ describe('completion', function()
         {5:-- Keyword Local completion (^N^P) }{6:match 1 of 3}             |
       ]])
       feed('<c-c>')
+      -- Non-blocking cmdwin (#40312): <C-C> closes the cmdwin and drops back
+      -- into ":" cmdline mode pre-filled with the line under the cursor.
       screen:expect([[
                                                                     |
-        {2:[No Name]                                                   }|
-        {1::}foo faa fee foo                                            |
-        {1:~                                                           }|*3
-        {3:[Command Line]                                              }|
+        {1:~                                                           }|*6
         :foo faa fee foo^                                            |
       ]])
     end)
@@ -1191,6 +1321,31 @@ describe('completion', function()
     ]])
   end)
 
+  -- oldtest: Test_complete_included_file_name()
+  it('shows included files by relative path', function()
+    t.mkdir('Xincl')
+    finally(function()
+      n.rmdir('Xincl')
+    end)
+    t.mkdir('Xincl/sub')
+    t.write_file('Xincl/sub/inc.vim', 'let included_word = 1\n')
+    t.write_file('Xincl/main.vim', 'source ./sub/inc.vim\n\n')
+    n.exec([[
+      edit Xincl/main.vim
+      setlocal include=^\\s*source\\s\\+ complete=i completeopt=menuone,noselect
+    ]])
+    feed('Goincluded_<C-N>')
+    screen:expect([[
+      source ./sub/inc.vim                                        |
+                                                                  |
+      included_^                                                   |
+      {4:included_word Xincl/sub/inc.vim }{1:                            }|
+      {1:~                                                           }|*3
+      {5:-- Keyword completion (^N^P) }{19:Back at original}               |
+    ]])
+    feed('<Esc>')
+  end)
+
   -- oldtest: Test_complete_changed_complete_info()
   it('no crash calling complete_info() in CompleteChanged', function()
     source([[
@@ -1372,5 +1527,449 @@ describe('completion', function()
       {1:~                                                           }|*5
       {5:-- Keyword completion (^N^P) The only match}                 |
     ]])
+  end)
+
+  -- oldtest: Test_shortmess()
+  it('shortmess+=c turns off completion messages', function()
+    command('set ruler')
+    command([[call setline(1, ['hello', 'hullo', 'heee'])]])
+    feed('Goh<C-N>')
+    screen:expect([[
+      hello                                                       |
+      hullo                                                       |
+      heee                                                        |
+      hello^                                                       |
+      {12:hello          }{1:                                             }|
+      {4:hullo          }{1:                                             }|
+      {4:heee           }{1:                                             }|
+      {5:-- Keyword completion (^N^P) }{6:match 1 of 3}                   |
+    ]])
+    feed('<Esc>')
+    command('set shm+=c')
+    feed('Sh<C-N>')
+    screen:expect([[
+      hello                                                       |
+      hullo                                                       |
+      heee                                                        |
+      hello^                                                       |
+      {12:hello          }{1:                                             }|
+      {4:hullo          }{1:                                             }|
+      {4:heee           }{1:                                             }|
+      {5:-- INSERT --}                              4,6            All|
+    ]])
+  end)
+
+  -- oldtest: Test_autocompletedelay()
+  it("'autocompletedelay' option", function()
+    screen:try_resize(60, 10)
+    source([[
+      call setline(1, ['foo', 'foobar', 'foobarbaz'])
+      setlocal autocomplete
+    ]])
+    screen:expect([[
+      ^foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      {1:~                                                           }|*6
+                                                                  |
+    ]])
+    screen.timeout = 400
+
+    feed('Gof')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {4:foobarbaz      }{1:                                             }|
+      {4:foobar         }{1:                                             }|
+      {4:foo            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+
+    feed('<Esc>')
+    command('set autocompletedelay=500')
+    feed('Sf')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {1:~                                                           }|*5
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('o')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      fo^                                                          |
+      {1:~                                                           }|*5
+      {5:-- INSERT --}                                                |
+    ]])
+    vim.uv.sleep(500)
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      fo^                                                          |
+      {4:foobarbaz      }{1:                                             }|
+      {4:foobar         }{1:                                             }|
+      {4:foo            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('<BS>')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {4:foobarbaz      }{1:                                             }|
+      {4:foobar         }{1:                                             }|
+      {4:foo            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+    vim.uv.sleep(500)
+    screen:expect_unchanged()
+
+    -- During delay wait, user can open menu using CTRL_N completion
+    feed('<Esc>')
+    command('set completeopt=menuone')
+    feed('Sf<C-N>')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      foo^                                                         |
+      {12:foo            }{1:                                             }|
+      {4:foobar         }{1:                                             }|
+      {4:foobarbaz      }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- Keyword completion (^N^P) }{6:match 1 of 3}                   |
+    ]])
+
+    -- After the menu is open, ^N/^P and Up/Down should not delay.
+    -- Wait a bit longer than 'autocompletedelay' so the popup is surely shown
+    -- before sending CTRL-N, otherwise the keys race with the deferred popup.
+    feed('<Esc>')
+    command('set completeopt=menu')
+    feed('Sf')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {1:~                                                           }|*5
+      {5:-- INSERT --}                                                |
+    ]])
+    vim.uv.sleep(600)
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {4:foobarbaz      }{1:                                             }|
+      {4:foobar         }{1:                                             }|
+      {4:foo            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('<C-N>')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      foobarbaz^                                                   |
+      {12:foobarbaz      }{1:                                             }|
+      {4:foobar         }{1:                                             }|
+      {4:foo            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('<Down>')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      foobarbaz^                                                   |
+      {4:foobarbaz      }{1:                                             }|
+      {12:foobar         }{1:                                             }|
+      {4:foo            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+
+    -- When menu is not open Up/Down moves cursor to different line
+    feed('<Esc>Sf')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {1:~                                                           }|*5
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('<Up>')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      f^oobarbaz                                                   |
+      f                                                           |
+      {1:~                                                           }|*5
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('<Down>')
+    screen:expect([[
+      foo                                                         |
+      foobar                                                      |
+      foobarbaz                                                   |
+      f^                                                           |
+      {1:~                                                           }|*5
+      {5:-- INSERT --}                                                |
+    ]])
+
+    feed('<esc>')
+  end)
+
+  local function run_test_autocompletedelay_ctrl_k(delay1, delay2)
+    source([[
+      new
+      call setline(1, 'foo bar baz')
+      set autocomplete autocompletedelay=200
+    ]])
+
+    feed('ob')
+    vim.uv.sleep(delay1)
+    feed('<C-K>')
+    vim.uv.sleep(delay2)
+    feed('.,<Esc>')
+    poke_eventloop()
+    expect('foo bar baz\nb…')
+
+    source([[
+      set autocomplete& autocompletedelay&
+      bwipe!
+    ]])
+  end
+
+  -- oldtest: Test_autocompletedelay_ctrl_k()
+  it("'autocompletedelay' doesn't interfere with i_CTRL-K", function()
+    -- Ctrl-K typed after 'autocompletedelay' expires
+    run_test_autocompletedelay_ctrl_k(250, 500)
+    -- Ctrl-K typed before 'autocompletedelay' expires
+    run_test_autocompletedelay_ctrl_k(150, 500)
+  end)
+
+  -- oldtest: Test_fuzzy_select_item_when_acl()
+  it([[first item isn't selected with "fuzzy" and 'acl']], function()
+    screen:try_resize(60, 10)
+    source([[
+      call setline(1, ["v", "vi", "vim"])
+      set autocomplete completeopt=menuone,noinsert,fuzzy autocompletedelay=300
+    ]])
+
+    feed('Govi')
+    screen:expect([[
+      v                                                           |
+      vi                                                          |
+      vim                                                         |
+      vi^                                                          |
+      {4:vi             }{1:                                             }|
+      {4:vim            }{1:                                             }|
+      {1:~                                                           }|*3
+      {5:-- INSERT --}                                                |
+    ]])
+
+    feed('<Esc>Sv')
+    screen:expect([[
+      v                                                           |
+      vi                                                          |
+      vim                                                         |
+      v^                                                           |
+      {4:v              }{1:                                             }|
+      {4:vi             }{1:                                             }|
+      {4:vim            }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('i')
+    screen:expect([[
+      v                                                           |
+      vi                                                          |
+      vim                                                         |
+      vi^                                                          |
+      {4:vi             }{1:                                             }|
+      {4:vim            }{1:                                             }|
+      {1:~                                                           }|*3
+      {5:-- INSERT --}                                                |
+    ]])
+  end)
+
+  -- oldtest: Test_autocompletedelay_longest_preinsert()
+  it("'autocompletedelay' with 'completeopt' longest/preinsert", function()
+    source([[
+      call setline(1, ['autocomplete', 'autocomxxx'])
+      set autocomplete completeopt+=longest autocompletedelay=500
+    ]])
+    screen:expect([[
+      ^autocomplete                                                |
+      autocomxxx                                                  |
+      {1:~                                                           }|*5
+                                                                  |
+    ]])
+    screen.timeout = 400
+
+    -- No spurious characters when autocompletedelay is in effect
+    feed('Goau')
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      au^                                                          |
+      {1:~                                                           }|*4
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('toc')
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      autoc^                                                       |
+      {1:~                                                           }|*4
+      {5:-- INSERT --}                                                |
+    ]])
+    vim.uv.sleep(500)
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      autoc{102:^om}                                                     |
+      {4:autocomxxx     }{1:                                             }|
+      {4:autocomplete   }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+
+    -- Deleting a char should still show longest text
+    feed('<Esc>Saut')
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      aut^                                                         |
+      {1:~                                                           }|*4
+      {5:-- INSERT --}                                                |
+    ]])
+    feed('<BS>')
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      au^                                                          |
+      {1:~                                                           }|*4
+      {5:-- INSERT --}                                                |
+    ]])
+    vim.uv.sleep(500)
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      au{102:^tocom}                                                     |
+      {4:autocomxxx     }{1:                                             }|
+      {4:autocomplete   }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+
+    -- Preinsert
+    command('set completeopt& completeopt+=preinsert')
+    feed('<Esc>Sau')
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      au^                                                          |
+      {1:~                                                           }|*4
+      {5:-- INSERT --}                                                |
+    ]])
+    vim.uv.sleep(500)
+    screen:expect([[
+      autocomplete                                                |
+      autocomxxx                                                  |
+      au{102:^tocomplete}                                                |
+      {12:autocomplete   }{1:                                             }|
+      {4:autocomxxx     }{1:                                             }|
+      {1:~                                                           }|*2
+      {5:-- INSERT --}                                                |
+    ]])
+  end)
+
+  -- oldtest: Test_fuzzy_filenames_compl_autocompl()
+  it('fuzzy file name does not crash with autocomplete', function()
+    feed('iset ac cot=fuzzy,longest<Esc>')
+    command('source')
+    feed('o')
+    poke_eventloop()
+    feed('.')
+    poke_eventloop()
+    feed('n')
+    poke_eventloop()
+    feed('a')
+    poke_eventloop()
+    feed('<C-X><C-F>') -- this used to cause segfault
+    screen:expect([[
+      set ac cot=fuzzy,longest                                    |
+      .na^                                                         |
+      {1:~                                                           }|*5
+      {5:-- File name completion (^F^N^P) }{9:Pattern not found}          |
+    ]])
+  end)
+
+  it('returns all entries in the directory #25791', function()
+    n.mkdir_p('Xtest/sub1')
+    n.mkdir_p('Xtest/sub2')
+    t.write_file('Xtest/A', '')
+    t.write_file('Xtest/sub1/B', '')
+    t.write_file('Xtest/sub2/C', '')
+    finally(function()
+      n.rmdir('Xtest')
+    end)
+    local path = ('%s/Xtest/**'):format(vim.fs.normalize(vim.uv.cwd()))
+    command(('set path=%s'):format(path))
+    eq({ 'A', 'B', 'C', 'sub1/', 'sub2/' }, fn.getcompletion('find ', 'cmdline'))
+  end)
+
+  it('complete-items commit_chars', function()
+    exec_lua(function()
+      _G.Omnifunc = function(findstart, _)
+        return findstart == 1 and 0 or { { word = 'foobar', commit_chars = '(' } }
+      end
+      vim.bo.omnifunc = 'v:lua.Omnifunc'
+    end)
+    n.command('set completeopt=menuone,noinsert')
+    feed('i<C-x><C-o>')
+    poke_eventloop()
+    feed('(')
+    eq('foobar(', n.api.nvim_get_current_line())
+  end)
+
+  it('complete_info() reports equal, preselect and commit_chars', function()
+    command('set completeopt=menuone,noinsert')
+    source([[
+      function! TestComplete() abort
+        call complete(1, [
+              \ {'word': 'foo', 'equal': 1},
+              \ {'word': 'bar', 'preselect': v:true},
+              \ {'word': 'baz', 'commit_chars': '('},
+              \ {'word': 'qux'},
+              \ ])
+        return ''
+      endfunction
+    ]])
+    feed('i<C-r>=TestComplete()<CR>')
+    poke_eventloop()
+
+    local items = fn.complete_info({ 'items' }).items
+    eq(4, #items)
+    eq({ 1, nil }, { items[1].equal, items[1].preselect })
+    eq(1, items[2].preselect)
+    eq('(', items[3].commit_chars)
+    eq({ nil, nil, nil }, { items[4].equal, items[4].preselect, items[4].commit_chars })
   end)
 end)

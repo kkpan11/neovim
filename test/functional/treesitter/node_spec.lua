@@ -1,6 +1,7 @@
 local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 
+local describe, it, before_each = t.describe, t.it, t.before_each
 local clear = n.clear
 local eq = t.eq
 local exec_lua = n.exec_lua
@@ -14,8 +15,6 @@ local function lua_eval(lua_expr)
 end
 
 describe('treesitter node API', function()
-  clear()
-
   it('double free tree', function()
     insert('F')
     exec_lua(function()
@@ -204,5 +203,67 @@ describe('treesitter node API', function()
     eq('a', lua_eval('vim.treesitter.get_node_text(children_by_field[1], 0)'))
     eq('b', lua_eval('vim.treesitter.get_node_text(children_by_field[2], 0)'))
     eq('c', lua_eval('vim.treesitter.get_node_text(children_by_field[3], 0)'))
+  end)
+
+  it('node access after tree edit', function()
+    insert([[
+      function x()
+        return true
+      end
+    ]])
+    exec_lua(function()
+      local tree = vim.treesitter.get_parser(0, 'lua'):parse()[1]
+
+      -- ensure treesitter does not try to edit the tree inplace
+      tree:copy()
+
+      local node = tree:root():child(0)
+      vim.api.nvim_buf_set_lines(0, 1, 2, false, {})
+      vim.schedule(function()
+        collectgarbage()
+        local a, b, c, d = node:range()
+        _G.range = { a, b, c, d }
+      end)
+    end)
+    eq({ 0, 0, 2, 3 }, lua_eval('range'))
+  end)
+
+  it(
+    'get_node_text() includes trailing newline for buffer source when node end_col == 0',
+    function()
+      insert('local x = 1')
+
+      exec_lua(function()
+        _G.node = vim.treesitter.get_parser(0, 'lua'):parse()[1]:root()
+      end)
+
+      eq('local x = 1\n', lua_eval('vim.treesitter.get_node_text(_G.node, 0)'))
+    end
+  )
+
+  it(
+    'get_node_text() includes trailing newline for string source when node end_col == 0',
+    function()
+      exec_lua(function()
+        local source = 'local x = 1\n'
+        _G.source = source
+        _G.node = vim.treesitter.get_string_parser(source, 'lua'):parse()[1]:root()
+      end)
+
+      eq('local x = 1\n', lua_eval('vim.treesitter.get_node_text(_G.node, _G.source)'))
+    end
+  )
+
+  it('tree:root() is idempotent', function()
+    insert([[
+      function x()
+        return true
+      end
+    ]])
+    exec_lua(function()
+      local tree = vim.treesitter.get_parser(0, 'lua'):parse()[1]
+      assert(tree:root() == tree:root())
+      assert(tree:root() == tree:root():tree():root())
+    end)
   end)
 end)

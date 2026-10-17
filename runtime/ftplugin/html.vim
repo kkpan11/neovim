@@ -2,9 +2,8 @@
 " Language:		HTML
 " Maintainer:		Doug Kearns <dougkearns@gmail.com>
 " Previous Maintainer:	Dan Sharp
-" Last Change:		2024 Jan 14
-" 2024 May 24 update 'commentstring' option
-" 2025 May 10 add expression folding #17141
+" Last Change:		2025 Sep 12
+" 2026 May 25 by Vim plugin: improve the matchit plugin #20313
 
 if exists("b:did_ftplugin")
   finish
@@ -18,7 +17,12 @@ setlocal matchpairs+=<:>
 setlocal commentstring=<!--\ %s\ -->
 setlocal comments=s:<!--,m:\ \ \ \ ,e:-->
 
-let b:undo_ftplugin = "setlocal comments< commentstring< matchpairs<"
+if exists('b:undo_ftplugin')
+  " no whitespace before |, handle possible :unmap at end of current value
+  let b:undo_ftplugin ..= "| setlocal comments< commentstring< matchpairs<"
+else
+  let b:undo_ftplugin = "setlocal comments< commentstring< matchpairs<"
+endif
 
 if get(g:, "ft_html_autocomment", 0)
   setlocal formatoptions-=t formatoptions+=croql
@@ -38,7 +42,7 @@ if exists("loaded_matchit") && !exists("b:match_words")
 	\	      '<:>,' ..
 	\	      '<\@<=[ou]l\>[^>]*\%(>\|$\):<\@<=li\>:<\@<=/[ou]l>,' ..
 	\	      '<\@<=dl\>[^>]*\%(>\|$\):<\@<=d[td]\>:<\@<=/dl>,' ..
-	\	      '<\@<=\([^/!][^ \t>]*\)[^>]*\%(>\|$\):<\@<=/\1>'
+	\	      '<\@<=\([^/!][^ \t>]*\)\%([ \t]\|>\|$\):<\@<=/\1>'
   let b:html_set_match_words = 1
   let b:undo_ftplugin ..= " | unlet! b:match_ignorecase b:match_words b:html_set_match_words"
 endif

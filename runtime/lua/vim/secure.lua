@@ -1,5 +1,11 @@
 local M = {}
 
+local fileformat_newlines = {
+  unix = '\n',
+  dos = '\r\n',
+  mac = '\r',
+}
+
 --- Reads trust database from $XDG_STATE_HOME/nvim/trust.
 ---
 ---@return table<string, string> Contents of trust database, if it exists. Empty table otherwise.
@@ -27,8 +33,8 @@ end
 --- If {fullpath} is a directory, then nothing is read from the filesystem, and
 --- `contents = true` and `hash = "directory"` is returned instead.
 ---
----@param fullpath (string) Path to a file or directory to read.
----@param bufnr (number?) The number of the buffer.
+---@param fullpath string Path to a file or directory to read.
+---@param bufnr integer? The number of the buffer.
 ---@return string|boolean? contents the contents of the file, or true if it's a directory
 ---@return string? hash the hash of the contents, or "directory" if it's a directory
 local function compute_hash(fullpath, bufnr)
@@ -39,15 +45,22 @@ local function compute_hash(fullpath, bufnr)
   end
 
   if bufnr then
-    local newline = vim.bo[bufnr].fileformat == 'unix' and '\n' or '\r\n'
-    contents =
-      table.concat(vim.api.nvim_buf_get_lines(bufnr --[[@as integer]], 0, -1, false), newline)
-    if vim.bo[bufnr].endofline then
-      contents = contents .. newline
+    local is_unchanged_empty = vim.api.nvim_buf_call(bufnr, function()
+      return not vim.bo[bufnr].modified and vim.fn.line2byte(1) == -1
+    end)
+    if is_unchanged_empty then
+      contents = ''
+    else
+      local newline = fileformat_newlines[vim.bo[bufnr].fileformat]
+      contents =
+        table.concat(vim.api.nvim_buf_get_lines(bufnr --[[@as integer]], 0, -1, false), newline)
+      if vim.bo[bufnr].endofline then
+        contents = contents .. newline
+      end
     end
   else
     do
-      local f = io.open(fullpath, 'r')
+      local f = io.open(fullpath, 'rb')
       if not f then
         return nil, nil
       end
@@ -103,6 +116,7 @@ function M.read(path)
   if not fullpath then
     return nil
   end
+  fullpath = vim.fs.normalize(fullpath) -- Ensure "/" slashes, even on Windows.
 
   local trust = read_trust()
 
@@ -121,16 +135,18 @@ function M.read(path)
     return contents
   end
 
-  local dir_msg = ''
+  local msg2 = ' To enable it, choose (v)iew then run `:trust`:'
+  local choices = '&ignore\n&view\n&deny'
   if hash == 'directory' then
-    dir_msg = ' DIRECTORY trust is decided only by its name, not its contents.'
+    msg2 = ' DIRECTORY trust is decided only by name, not contents:'
+    choices = '&ignore\n&view\n&deny\n&allow'
   end
 
   -- File either does not exist in trust database or the hash does not match
   local ok, result = pcall(
     vim.fn.confirm,
-    string.format('%s is not trusted.%s', fullpath, dir_msg),
-    '&ignore\n&view\n&deny\n&allow',
+    string.format('exrc: Found untrusted code.%s\n%s', msg2, fullpath),
+    choices,
     1
   )
 
@@ -141,13 +157,13 @@ function M.read(path)
     return nil
   elseif result == 2 then
     -- View
-    vim.cmd('sview ' .. fullpath)
+    vim.cmd(('sview %s'):format(vim.fn.fnameescape(fullpath)))
     return nil
   elseif result == 3 then
     -- Deny
     trust[fullpath] = '!'
     contents = nil
-  elseif result == 4 then
+  elseif hash == 'directory' and result == 4 then
     -- Allow
     trust[fullpath] = hash
   end
@@ -160,13 +176,13 @@ end
 --- @class vim.trust.opts
 --- @inlinedoc
 ---
---- - `'allow'` to add a file to the trust database and trust it,
---- - `'deny'` to add a file to the trust database and deny it,
---- - `'remove'` to remove file from the trust database
+--- One of:
+---   - `'allow'` to add a file to the trust database and trust it,
+---   - `'deny'` to add a file to the trust database and deny it,
+---   - `'remove'` to remove file from the trust database
 --- @field action 'allow'|'deny'|'remove'
 ---
 --- Path to a file to update. Mutually exclusive with {bufnr}.
---- Cannot be used when {action} is "allow".
 --- @field path? string
 --- Buffer number to update. Mutually exclusive with {path}.
 --- @field bufnr? integer
@@ -193,10 +209,6 @@ function M.trust(opts)
 
   assert(not path or not bufnr, '"path" and "bufnr" are mutually exclusive')
 
-  if action == 'allow' then
-    assert(not path, '"path" is not valid when action is "allow"')
-  end
-
   local fullpath ---@type string?
   if path then
     fullpath = vim.uv.fs_realpath(vim.fs.normalize(path))
@@ -213,6 +225,7 @@ function M.trust(opts)
   if not fullpath then
     return false, string.format('invalid path: %s', path)
   end
+  fullpath = vim.fs.normalize(fullpath) -- Ensure "/" slashes, even on Windows.
 
   local trust = read_trust()
 

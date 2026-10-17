@@ -3,6 +3,7 @@ local ts = vim.treesitter
 local Range = require('vim.treesitter._range')
 
 local api = vim.api
+local nvim_on = require('vim._core.util').nvim_on
 
 ---Treesitter folding is done in two steps:
 ---(1) compute the fold levels with the syntax tree and cache the result (`compute_folds_levels`)
@@ -26,12 +27,12 @@ local FoldInfo = {}
 FoldInfo.__index = FoldInfo
 
 ---@private
----@param bufnr integer
-function FoldInfo.new(bufnr)
+---@param buf integer
+function FoldInfo.new(buf)
   return setmetatable({
     levels0 = {},
     levels = {},
-    parser = ts.get_parser(bufnr, nil, { error = false }),
+    parser = ts.get_parser(buf, nil),
   }, FoldInfo)
 end
 
@@ -108,7 +109,7 @@ local function compute_folds_levels(bufnr, info, srow, erow, callback)
       for _, match, metadata in query:iter_matches(tree:root(), bufnr, math.max(srow - 1, 0), erow) do
         for id, nodes in pairs(match) do
           if query.captures[id] == 'fold' then
-            local range = ts.get_range(nodes[1], bufnr, metadata[id])
+            local range = ts.get_range(assert(nodes[1]), bufnr, metadata[id])
             local start, _, stop, stop_col = Range.unpack4(range)
 
             if #nodes > 1 then
@@ -169,6 +170,7 @@ local function compute_folds_levels(bufnr, info, srow, erow, callback)
           -- If this line ends a fold f1 and starts a fold f2, then move f1's end to the previous line
           -- so that f2 gets the correct level on this line. This may reduce the size of f1 below
           -- foldminlines, but we don't handle it for simplicity.
+          --- @type integer avoid flaky error
           adjusted = level0 - leave_line
           leave_line = 0
         end
@@ -200,7 +202,7 @@ local M = {}
 ---@type table<integer,TS.FoldInfo>
 local foldinfos = {}
 
-local group = api.nvim_create_augroup('nvim.treesitter.fold', {})
+local group = api.nvim_create_augroup('nvim.treesitter.fold')
 
 --- Update the folds in the windows that contain the buffer and use expr foldmethod (assuming that
 --- the user doesn't use different foldexpr for the same buffer).
@@ -210,6 +212,7 @@ local group = api.nvim_create_augroup('nvim.treesitter.fold', {})
 ---@package
 ---@param srow integer
 ---@param erow integer 0-indexed, exclusive
+---@param bufnr integer
 function FoldInfo:foldupdate(bufnr, srow, erow)
   if self.foldupdate_range then
     edit_range(self.foldupdate_range, srow, erow, erow)
@@ -221,18 +224,13 @@ function FoldInfo:foldupdate(bufnr, srow, erow)
     -- foldUpdate() is guarded in insert mode. So update folds on InsertLeave
     if #(api.nvim_get_autocmds({
       group = group,
-      buffer = bufnr,
+      buf = bufnr,
     })) > 0 then
       return
     end
-    api.nvim_create_autocmd('InsertLeave', {
-      group = group,
-      buffer = bufnr,
-      once = true,
-      callback = function()
-        self:do_foldupdate(bufnr)
-      end,
-    })
+    nvim_on('InsertLeave', group, { buf = bufnr, once = true }, function()
+      self:do_foldupdate(bufnr)
+    end)
     return
   end
 
@@ -240,6 +238,7 @@ function FoldInfo:foldupdate(bufnr, srow, erow)
 end
 
 ---@package
+---@param bufnr integer
 function FoldInfo:do_foldupdate(bufnr)
   -- InsertLeave is not executed when <C-C> is used for exiting the insert mode, leaving
   -- do_foldupdate untouched. If another execution of foldupdate consumes foldupdate_range, the
@@ -294,9 +293,10 @@ local function on_changedtree(bufnr, tree_changes)
       local srow, _, erow, ecol = Range.unpack4(change)
       -- If a parser doesn't have any ranges explicitly set, treesitter will
       -- return a range with end_row and end_bytes with a value of UINT32_MAX,
-      -- so clip end_row to the max buffer line.
+      -- which is represented as -1 on 32-bit platforms, so clip end_row to
+      -- the max buffer line.
       -- TODO(lewis6991): Handle this generally
-      if erow > max_erow then
+      if erow > max_erow or erow < 0 then
         erow = max_erow
       elseif ecol > 0 then
         erow = erow + 1
@@ -321,6 +321,7 @@ end
 ---@param old_col integer
 ---@param new_row integer
 ---@param new_col integer
+---@param start_col integer
 local function on_bytes(bufnr, start_row, start_col, old_row, old_col, new_row, new_col)
   -- Buffer reload clears `foldinfos[bufnr]`, which may still be nil when callback is invoked.
   local foldinfo = foldinfos[bufnr]
@@ -380,6 +381,8 @@ local function on_bytes(bufnr, start_row, start_col, old_row, old_col, new_row, 
   end
 end
 
+local registered_cbs = {} ---@type table<integer, boolean>
+
 ---@param lnum integer|nil
 ---@return string
 function M.foldexpr(lnum)
@@ -388,13 +391,9 @@ function M.foldexpr(lnum)
 
   if not foldinfos[bufnr] then
     foldinfos[bufnr] = FoldInfo.new(bufnr)
-    api.nvim_create_autocmd({ 'BufUnload', 'VimEnter', 'FileType' }, {
-      buffer = bufnr,
-      once = true,
-      callback = function()
-        foldinfos[bufnr] = nil
-      end,
-    })
+    nvim_on({ 'BufUnload', 'VimEnter', 'FileType' }, nil, { buf = bufnr, once = true }, function()
+      foldinfos[bufnr] = nil
+    end)
 
     local parser = foldinfos[bufnr].parser
     if not parser then
@@ -403,40 +402,62 @@ function M.foldexpr(lnum)
 
     compute_folds_levels(bufnr, foldinfos[bufnr])
 
-    parser:register_cbs({
-      on_changedtree = function(tree_changes)
-        on_changedtree(bufnr, tree_changes)
-      end,
+    if not registered_cbs[bufnr] then
+      parser:register_cbs({
+        on_changedtree = function(tree_changes)
+          on_changedtree(bufnr, tree_changes)
+        end,
 
-      on_bytes = function(_, _, start_row, start_col, _, old_row, old_col, _, new_row, new_col, _)
-        on_bytes(bufnr, start_row, start_col, old_row, old_col, new_row, new_col)
-      end,
+        on_bytes = function(
+          _,
+          _,
+          start_row,
+          start_col,
+          _,
+          old_row,
+          old_col,
+          _,
+          new_row,
+          new_col,
+          _
+        )
+          on_bytes(bufnr, start_row, start_col, old_row, old_col, new_row, new_col)
+        end,
 
-      on_detach = function()
-        foldinfos[bufnr] = nil
-      end,
-    })
+        on_detach = function()
+          foldinfos[bufnr] = nil
+          registered_cbs[bufnr] = nil
+        end,
+      })
+
+      registered_cbs[bufnr] = true
+    end
   end
 
   return foldinfos[bufnr].levels[lnum] or '0'
 end
 
-api.nvim_create_autocmd('OptionSet', {
+nvim_on('OptionSet', group, {
   pattern = { 'foldminlines', 'foldnestmax' },
   desc = 'Refresh treesitter folds',
-  callback = function()
-    local buf = api.nvim_get_current_buf()
-    local bufs = vim.v.option_type == 'global' and vim.tbl_keys(foldinfos)
-      or foldinfos[buf] and { buf }
-      or {}
-    for _, bufnr in ipairs(bufs) do
-      foldinfos[bufnr] = FoldInfo.new(bufnr)
-      api.nvim_buf_call(bufnr, function()
-        compute_folds_levels(bufnr, foldinfos[bufnr], nil, nil, function()
-          foldinfos[bufnr]:foldupdate(bufnr, 0, api.nvim_buf_line_count(bufnr))
-        end)
+}, function()
+  local buf = api.nvim_get_current_buf()
+  local bufs = vim.v.option_type == 'global' and vim.tbl_keys(foldinfos)
+    or foldinfos[buf] and { buf }
+    or {}
+  for _, bufnr in ipairs(bufs) do
+    local foldinfo = FoldInfo.new(bufnr)
+    foldinfos[bufnr] = foldinfo
+    api.nvim_buf_call(bufnr, function()
+      compute_folds_levels(bufnr, foldinfo, nil, nil, function()
+        -- FileType/BufUnload can clear or replace the fold state while this
+        -- async parse is in flight. Ignore callbacks for stale generations.
+        if foldinfos[bufnr] ~= foldinfo then
+          return
+        end
+        foldinfo:foldupdate(bufnr, 0, api.nvim_buf_line_count(bufnr))
       end)
-    end
-  end,
-})
+    end)
+  end
+end)
 return M

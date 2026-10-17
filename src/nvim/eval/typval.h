@@ -15,9 +15,7 @@
 #include "nvim/message.h"
 #include "nvim/types_defs.h"
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "eval/typval.h.inline.generated.h"
-#endif
+#include "eval/typval.h.inline.generated.h"
 
 // In a hashtab item "hi_key" points to "di_key" in a dictitem.
 // This avoids adding a pointer to the hashtab item.
@@ -270,7 +268,7 @@ static inline uint8_t tv_blob_get(const blob_T *const b, int idx)
 
 /// Store the byte `c` at index `idx` in the blob.
 ///
-/// @param[in]  b  Blob to index. Cannot be NULL.
+/// @param[in]  blob  Blob to index. Cannot be NULL.
 /// @param[in]  idx  Index in a blob. Must be valid.
 /// @param[in]  c  Value to store.
 static inline void tv_blob_set(blob_T *const blob, int idx, uint8_t c)
@@ -448,6 +446,4 @@ EXTERN const size_t kTVCstring INIT( = TV_CSTRING);
 EXTERN const size_t kTVTranslate INIT( = TV_TRANSLATE);
 #endif
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "eval/typval.h.generated.h"
-#endif
+#include "eval/typval.h.generated.h"

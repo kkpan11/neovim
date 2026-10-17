@@ -1,4 +1,6 @@
 --- @meta
+-- This file is NOT generated, edit it directly.
+error('Cannot require a meta file')
 
 --- @alias elem_or_list<T> T|T[]
 
@@ -9,6 +11,8 @@ vim.uv = ...
 
 vim.F = require('vim.F')
 vim._watch = require('vim._watch')
+---@diagnostic disable-next-line: no-unknown
+vim.async = require('vim.async')
 vim.diagnostic = require('vim.diagnostic')
 vim.filetype = require('vim.filetype')
 vim.fs = require('vim.fs')
@@ -16,15 +20,22 @@ vim.func = require('vim.func')
 vim.glob = require('vim.glob')
 vim.health = require('vim.health')
 vim.hl = require('vim.hl')
+vim.inspect = require('vim.inspect')
 vim.iter = require('vim.iter')
 vim.keymap = require('vim.keymap')
 vim.loader = require('vim.loader')
+vim.log = require('vim.log')
 vim.lsp = require('vim.lsp')
+vim.net = require('vim.net')
+vim.pack = require('vim.pack')
+vim.pos = require('vim.pos')
+vim.range = require('vim.range')
 vim.re = require('vim.re')
 vim.secure = require('vim.secure')
 vim.snippet = require('vim.snippet')
 vim.text = require('vim.text')
 vim.treesitter = require('vim.treesitter')
+vim.tty = require('vim.tty')
 vim.ui = require('vim.ui')
 vim.version = require('vim.version')
 

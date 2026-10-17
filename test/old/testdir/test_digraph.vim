@@ -508,19 +508,25 @@ func Test_loadkeymap_error()
   call assert_fails('source Xkeymap', 'E791:')
 endfunc
 
+" Test for ":loadkeymap" in a block that is not executed: it reads the rest of
+" the script, so that rest, the "endif" with it, is thrown away instead of
+" being read as commands.
+func Test_loadkeymap_skipped()
+  CheckFeature keymap
+  call writefile(['if 0', '  loadkeymap', '  a b', 'endif'], 'Xkeymap', 'D')
+  call assert_fails('source Xkeymap', 'E171:')
+endfunc
+
 " Test for the characters displayed on the screen when entering a digraph
 func Test_entering_digraph()
   CheckRunVimInTerminal
   let buf = RunVimInTerminal('', {'rows': 6})
   call term_sendkeys(buf, "i\<C-K>")
-  call term_wait(buf)
-  call assert_equal('?', term_getline(buf, 1))
+  call WaitForAssert({-> assert_equal('?', term_getline(buf, 1))}, 1000)
   call term_sendkeys(buf, "1")
-  call term_wait(buf)
-  call assert_equal('1', term_getline(buf, 1))
+  call WaitForAssert({-> assert_equal('1', term_getline(buf, 1))}, 1000)
   call term_sendkeys(buf, "2")
-  call term_wait(buf)
-  call assert_equal('½', term_getline(buf, 1))
+  call WaitForAssert({-> assert_equal('½', term_getline(buf, 1))}, 1000)
   call StopVimInTerminal(buf)
 endfunc
 
@@ -616,5 +622,16 @@ func Test_digraph_getlist_function()
   call assert_fails('call digraph_getlist(0z12)', 'E1212: Bool required for argument 1')
 endfunc
 
+func Test_digraph_angle_bracket_patch()
+  " Ensure that the deprecated angle brackets 2329/232A ('</','/>') are not used
+  call assert_notequal('〈', digraph_get('</'))
+  call assert_notequal('〉', digraph_get('/>'))
+  " Ensure that the CJK angle brackets 3008/3009 ('</','/>') are used
+  call assert_equal('〈', digraph_get('</'))
+  call assert_equal('〉', digraph_get('/>'))
+  " Ensure that the mathematical angle brackets 27E8/27E9 ('<[',']>') are defined
+  call assert_equal('⟨', digraph_get('<['))
+  call assert_equal('⟩', digraph_get(']>'))
+endfunc
 
 " vim: shiftwidth=2 sts=2 expandtab

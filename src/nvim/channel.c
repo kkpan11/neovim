@@ -23,6 +23,7 @@
 #include "nvim/event/proc.h"
 #include "nvim/event/rstream.h"
 #include "nvim/event/socket.h"
+#include "nvim/event/stream.h"
 #include "nvim/event/wstream.h"
 #include "nvim/garray.h"
 #include "nvim/gettext_defs.h"
@@ -37,11 +38,12 @@
 #include "nvim/msgpack_rpc/channel.h"
 #include "nvim/msgpack_rpc/server.h"
 #include "nvim/os/fs.h"
+#include "nvim/os/os.h"
 #include "nvim/os/os_defs.h"
 #include "nvim/os/shell.h"
-#include "nvim/path.h"
 #include "nvim/terminal.h"
 #include "nvim/types_defs.h"
+#include "nvim/ui_client.h"
 
 #ifdef MSWIN
 # include "nvim/os/fs.h"
@@ -56,9 +58,7 @@ static bool did_stdio = false;
 /// 2 is reserved for stderr channel
 static uint64_t next_chan_id = CHAN_STDERR + 1;
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "channel.c.generated.h"
-#endif
+#include "channel.c.generated.h"
 
 /// Teardown the module
 void channel_teardown(void)
@@ -132,7 +132,7 @@ bool channel_close(uint64_t id, ChannelPart part, const char **error)
   case kChannelStreamProc:
     proc = &chan->stream.proc;
     if (part == kChannelPartStdin || close_main) {
-      wstream_may_close(&proc->in);
+      stream_may_close(&proc->in);
     }
     if (part == kChannelPartStdout || close_main) {
       rstream_may_close(&proc->out);
@@ -151,7 +151,7 @@ bool channel_close(uint64_t id, ChannelPart part, const char **error)
       rstream_may_close(&chan->stream.stdio.in);
     }
     if (part == kChannelPartStdout || close_main) {
-      wstream_may_close(&chan->stream.stdio.out);
+      stream_may_close(&chan->stream.stdio.out);
     }
     if (part == kChannelPartStderr) {
       *error = e_invstream;
@@ -168,7 +168,13 @@ bool channel_close(uint64_t id, ChannelPart part, const char **error)
       chan->stream.err.closed = true;
       // Don't close on exit, in case late error messages
       if (!exiting) {
-        fclose(stderr);
+        // Don't close the file descriptor, as that may cause later writes to stderr
+        // to go to an unrelated file. Redirect it to NUL or /dev/null instead.
+#ifdef MSWIN
+        freopen("NUL:", "w", stderr);
+#else
+        freopen("/dev/null", "w", stderr);
+#endif
       }
       channel_decref(chan);
     }
@@ -184,6 +190,7 @@ bool channel_close(uint64_t id, ChannelPart part, const char **error)
       chan->stream.internal.cb = LUA_NOREF;
       chan->stream.internal.closed = true;
       terminal_close(&chan->term, 0);
+      chan->exit_status = 0;
     } else {
       channel_decref(chan);
     }
@@ -219,7 +226,7 @@ Channel *channel_alloc(ChannelStreamType type)
   chan->refcount = 1;
   chan->exit_status = -1;
   chan->streamtype = type;
-  chan->detach = false;
+  chan->detach = type != kChannelStreamStdio;
   assert(chan->id <= VARNUMBER_MAX);
   pmap_put(uint64_t)(&channels, chan->id, chan);
   return chan;
@@ -256,7 +263,7 @@ void channel_create_event(Channel *chan, const char *ext_source)
   (void)ext_source;
 #endif
 
-  channel_info_changed(chan, true);
+  channel_event(chan, EVENT_CHANOPEN);
 }
 
 void channel_incref(Channel *chan)
@@ -266,6 +273,11 @@ void channel_incref(Channel *chan)
 
 void channel_decref(Channel *chan)
 {
+  if (chan->refcount == 1 && !chan->did_close_event) {
+    chan->did_close_event = true;
+    channel_event(chan, EVENT_CHANCLOSE);
+  }
+
   if (!(--chan->refcount)) {
     // delay free, so that libuv is done with the handles
     multiqueue_put(main_loop.events, free_channel_event, chan);
@@ -393,11 +405,16 @@ Channel *channel_job_start(char **argv, const char *exepath, CallbackReader on_s
   proc->argv = argv;
   proc->exepath = exepath;
   proc->cb = channel_proc_exit_cb;
+  proc->state_cb = channel_proc_state_cb;
   proc->events = chan->events;
   proc->detach = detach;
   proc->cwd = cwd;
   proc->env = env;
   proc->overlapped = overlapped;
+#ifdef MSWIN
+  // Windows: spawn channel jobs with noinherit (so writes don't leak to TUI #40074).
+  proc->stdio_noinherit = true;
+#endif
 
   char *cmd = xstrdup(proc_get_exepath(proc));
   bool has_out, has_err;
@@ -408,6 +425,14 @@ Channel *channel_job_start(char **argv, const char *exepath, CallbackReader on_s
     has_out = rpc || callback_reader_set(chan->on_data);
     has_err = callback_reader_set(chan->on_stderr);
     proc->fwd_err = chan->on_stderr.fwd_err;
+#ifdef MSWIN
+    // DETACHED_PROCESS can't inherit console handles (like ConPTY stderr).
+    // Use a pipe relay: libuv creates a pipe, on_channel_output writes to stderr.
+    if (!has_err && proc->fwd_err && proc->detach) {
+      has_err = true;
+      proc->fwd_err = false;
+    }
+#endif
   }
 
   bool has_in = stdin_mode == kChannelStdinPipe;
@@ -461,10 +486,7 @@ uint64_t channel_connect(bool tcp, const char *address, bool rpc, CallbackReader
   Channel *channel;
 
   if (!tcp && rpc) {
-    char *path = fix_fname(address);
-    bool loopback = server_owns_pipe_address(path);
-    xfree(path);
-    if (loopback) {
+    if (server_owns_pipe_address(address)) {
       // Create a loopback channel. This avoids deadlock if nvim connects to
       // its own named pipe.
       channel = channel_alloc(kChannelStreamInternal);
@@ -477,7 +499,9 @@ uint64_t channel_connect(bool tcp, const char *address, bool rpc, CallbackReader
   channel = channel_alloc(kChannelStreamSocket);
   if (!socket_connect(&main_loop, &channel->stream.socket,
                       tcp, address, timeout, error)) {
-    channel_destroy_early(channel);
+    // Don't use channel_destroy_early() as new channels may have been allocated
+    // by channel_from_connection() while polling for uv events.
+    channel_decref(channel);
     return 0;
   }
 
@@ -505,7 +529,12 @@ end:
 void channel_from_connection(SocketWatcher *watcher)
 {
   Channel *channel = channel_alloc(kChannelStreamSocket);
-  socket_watcher_accept(watcher, &channel->stream.socket);
+  int result = socket_watcher_accept(watcher, &channel->stream.socket);
+  if (result != 0) {
+    ELOG("Failed to accept connection: %s", uv_strerror(result));
+    channel_destroy_early(channel);
+    return;
+  }
   channel->stream.socket.s.internal_close_cb = close_cb;
   channel->stream.socket.s.internal_data = channel;
   wstream_init(&channel->stream.socket.s, 0);
@@ -537,10 +566,9 @@ uint64_t channel_from_stdio(bool rpc, CallbackReader on_output, const char **err
   // Strangely, ConPTY doesn't work if stdin and stdout are pipes. So replace
   // stdin and stdout with CONIN$ and CONOUT$, respectively.
   if (embedded_mode && os_has_conpty_working()) {
-    stdin_dup_fd = os_dup(STDIN_FILENO);
-    os_replace_stdin_to_conin();
-    stdout_dup_fd = os_dup(STDOUT_FILENO);
-    os_replace_stdout_and_stderr_to_conout();
+    stdin_dup_fd = os_dup_cloexec(STDIN_FILENO);
+    stdout_dup_fd = os_dup_cloexec(STDOUT_FILENO);
+    os_attach_parent_console();
   }
 #else
   if (embedded_mode) {
@@ -619,7 +647,7 @@ size_t channel_send(uint64_t id, char *data, size_t len, bool data_owned, const 
   // write can be delayed indefinitely, so always use an allocated buffer
   WBuffer *buf = wstream_new_buffer(data_owned ? data : xmemdup(data, len),
                                     len, 1, xfree);
-  return wstream_write(in, buf) ? len : 0;
+  return wstream_write(in, buf) == 0 ? len : 0;
 
 retfree:
   if (data_owned) {
@@ -663,27 +691,23 @@ static size_t on_channel_output(RStream *stream, Channel *chan, const char *buf,
                                 bool eof, CallbackReader *reader)
 {
   if (chan->term) {
-    if (count) {
-      const char *p = buf;
-      const char *end = buf + count;
-      while (p < end) {
-        // Don't pass incomplete UTF-8 sequences to libvterm. #16245
-        // Composing chars can be passed separately, so utf_ptr2len_len() is enough.
-        int clen = utf_ptr2len_len(p, (int)(end - p));
-        if (clen > end - p) {
-          count = (size_t)(p - buf);
-          break;
-        }
-        p += clen;
-      }
-    }
-
     terminal_receive(chan->term, buf, count);
   }
 
   if (eof) {
     reader->eof = true;
   }
+
+#ifdef MSWIN
+  // Pipe relay for fwd_err on Windows: relay server stderr to stdout.
+  // DETACHED_PROCESS prevents inheriting console handles, so channel_job_start
+  // creates a pipe instead. Write to stdout because ConPTY only captures stdout.
+  // On non-Windows, fwd_err uses UV_INHERIT_FD directly; this path is never reached.
+  if (reader->fwd_err && count > 0) {
+    ptrdiff_t wres = os_write(STDOUT_FILENO, buf, count, false);
+    return (size_t)MAX(wres, 0);
+  }
+#endif
 
   if (callback_reader_set(*reader)) {
     ga_concat_len(&reader->buffer, buf, count);
@@ -768,14 +792,37 @@ static void channel_proc_exit_cb(Proc *proc, int status, void *data)
     terminal_close(&chan->term, status);
   }
 
+  // TODO(justinmk): figure out why rpc_close sometimes(??) isn't called.
+  // Theories:
+  // - EOF not received in receive_msgpack, then doesn't call chan_close_on_err().
+  // - proc_close_handles not tickled by ui_client.c's LOOP_PROCESS_EVENTS?
+  if (!exiting && ui_client_channel_id == chan->id) {
+    // rpc_close_event() could handle this in principle also for processes, but
+    // sometimes it gets called later than this, and we do care about the exit status
+    ui_client_attach_to_restarted_server(proc->status != 0);
+    if (ui_client_channel_id == chan->id) {
+      // If the current embedded server has exited and no new server is started,
+      // the client should exit with the same status.
+      exit_on_closed_chan(status);
+    }
+  }
+
   // If process did not exit, we only closed the handle of a detached process.
   bool exited = (status >= 0);
   if (exited && chan->on_exit.type != kCallbackNone) {
     schedule_channel_event(chan);
-    chan->exit_status = status;
   }
+  chan->exit_status = exited ? status : chan->exit_status;
 
   channel_decref(chan);
+}
+
+static void channel_proc_state_cb(Proc *proc, bool suspended, void *data)
+{
+  Channel *chan = data;
+  if (chan->term) {
+    terminal_set_state(chan->term, suspended);
+  }
 }
 
 static void channel_callback_call(Channel *chan, CallbackReader *reader)
@@ -810,26 +857,45 @@ static void channel_callback_call(Channel *chan, CallbackReader *reader)
   typval_T rettv = TV_INITIAL_VALUE;
   callback_call(cb, 3, argv, &rettv);
   tv_clear(&rettv);
+
+  if (reader) {
+    tv_list_unref(argv[1].vval.v_list);
+  }
 }
 
-/// Open terminal for channel
+/// Allocate terminal for channel
 ///
 /// Channel `chan` is assumed to be an open pty channel,
 /// and `buf` is assumed to be a new, unmodified buffer.
-void channel_terminal_open(buf_T *buf, Channel *chan)
+void channel_terminal_alloc(buf_T *buf, Channel *chan)
 {
   TerminalOptions topts = {
     .data = chan,
     .width = chan->stream.pty.width,
     .height = chan->stream.pty.height,
+    .read_pause_cb = term_read_pause,
     .write_cb = term_write,
     .resize_cb = term_resize,
+    .resume_cb = term_resume,
     .close_cb = term_close,
     .force_crlf = false,
   };
   buf->b_p_channel = (OptInt)chan->id;  // 'channel' option
   channel_incref(chan);
-  terminal_open(&chan->term, buf, topts);
+  chan->term = terminal_alloc(buf, topts);
+}
+
+static void term_read_pause(bool pause, void *data)
+{
+  Channel *chan = data;
+  if (chan->stream.proc.out.s.closed) {
+    return;
+  }
+  if (pause) {
+    rstream_stop_inner(&chan->stream.proc.out);
+  } else {
+    rstream_start_inner(&chan->stream.proc.out);
+  }
 }
 
 static void term_write(const char *buf, size_t size, void *data)
@@ -849,6 +915,12 @@ static void term_resize(uint16_t width, uint16_t height, void *data)
 {
   Channel *chan = data;
   pty_proc_resize(&chan->stream.pty, width, height);
+}
+
+static void term_resume(void *data)
+{
+  Channel *chan = data;
+  pty_proc_resume(&chan->stream.pty);
 }
 
 static inline void term_delayed_free(void **argv)
@@ -872,9 +944,8 @@ static void term_close(void *data)
   multiqueue_put(chan->events, term_delayed_free, data);
 }
 
-void channel_info_changed(Channel *chan, bool new_chan)
+void channel_event(Channel *chan, event_T event)
 {
-  event_T event = new_chan ? EVENT_CHANOPEN : EVENT_CHANINFO;
   if (has_event(event)) {
     channel_incref(chan);
     multiqueue_put(main_loop.events, set_info_event, chan, (void *)(intptr_t)event);
@@ -903,6 +974,8 @@ static void set_info_event(void **argv)
   channel_decref(chan);
 }
 
+/// Unlike terminal_running(), this returns false immediately after stopping a job.
+/// However, this always returns false for nvim_open_term() terminals.
 bool channel_job_running(uint64_t id)
 {
   Channel *chan = find_channel(id);
@@ -918,7 +991,7 @@ Dict channel_info(uint64_t id, Arena *arena)
     return (Dict)ARRAY_DICT_INIT;
   }
 
-  Dict info = arena_dict(arena, 8);
+  Dict info = arena_dict(arena, 9);
   PUT_C(info, "id", INTEGER_OBJ((Integer)chan->id));
 
   const char *stream_desc, *mode_desc;
@@ -965,9 +1038,12 @@ Dict channel_info(uint64_t id, Arena *arena)
   if (chan->is_rpc) {
     mode_desc = "rpc";
     PUT_C(info, "client", DICT_OBJ(chan->rpc.info));
+    PUT_C(info, "detach", BOOLEAN_OBJ(chan->detach));
   } else if (chan->term) {
     mode_desc = "terminal";
+    PUT_C(info, "buf", BUFFER_OBJ(terminal_buf(chan->term)));
     PUT_C(info, "buffer", BUFFER_OBJ(terminal_buf(chan->term)));
+    PUT_C(info, "exitcode", INTEGER_OBJ(chan->exit_status));
   } else {
     mode_desc = "bytes";
   }

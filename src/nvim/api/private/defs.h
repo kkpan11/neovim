@@ -15,16 +15,17 @@
 
 #define ERROR_SET(e) ((e)->type != kErrorTypeNone)
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# define ArrayOf(...) Array
-# define DictOf(...) Dict
-# define Dict(name) KeyDict_##name
-# define DictHash(name) KeyDict_##name##_get_field
-# define DictKey(name)
-# define LuaRefOf(...) LuaRef
-# define Union(...) Object
-# include "api/private/defs.h.inline.generated.h"
-#endif
+#define ArrayOf(...) Array
+#define DictOf(...) Dict
+#define DictAs(name) Dict
+#define Dict(name) KeyDict_##name
+#define Enum(...) String
+#define DictHash(name) KeyDict_##name##_get_field
+#define DictKey(name)
+#define LuaRefOf(...) LuaRef
+#define Union(...) Object
+#define Tuple(...) Array
+#include "api/private/defs.h.inline.generated.h"
 
 // Basic types
 typedef enum {
@@ -103,6 +104,9 @@ typedef enum {
   kObjectTypeArray,
   kObjectTypeDict,
   kObjectTypeLuaRef,
+  /// Internal-only: for unset options (e.g. the local value of a global-local option).
+  /// Never crosses RPC/Lua boundary (becomes Nil).
+  kObjectTypeUnset,
   // EXT types, cannot be split or reordered, see #EXT_OBJECT_TYPE_SHIFT
   kObjectTypeBuffer,
   kObjectTypeWindow,
@@ -155,4 +159,4 @@ typedef struct {
   bool is_hlgroup;
 } KeySetLink;
 
-typedef KeySetLink *(*FieldHashfn)(const char *str, size_t len);
+typedef const KeySetLink *(*FieldHashfn)(const char *str, size_t len);

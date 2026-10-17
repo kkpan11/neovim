@@ -13,8 +13,8 @@
 #include "nvim/event/loop.h"
 #include "nvim/event/multiqueue.h"
 #include "nvim/ex_getln.h"
-#include "nvim/getchar.h"
 #include "nvim/globals.h"
+#include "nvim/input.h"
 #include "nvim/insexpand.h"
 #include "nvim/keycodes.h"
 #include "nvim/log.h"
@@ -29,9 +29,7 @@
 #include "nvim/types_defs.h"
 #include "nvim/ui.h"
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "state.c.generated.h"
-#endif
+#include "state.c.generated.h"
 
 void state_enter(VimState *s)
   FUNC_ATTR_NONNULL_ALL
@@ -138,13 +136,6 @@ void state_handle_k_event(void)
 /// Return true if in the current mode we need to use virtual.
 bool virtual_active(win_T *wp)
 {
-  // While an operator is being executed we return "virtual_op", because
-  // VIsual_active has already been reset, thus we can't check for "block"
-  // being used.
-  if (virtual_op != kNone) {
-    return virtual_op;
-  }
-
   // In Terminal mode the cursor can be positioned anywhere by the application
   if (State & MODE_TERMINAL) {
     return true;
@@ -152,9 +143,18 @@ bool virtual_active(win_T *wp)
 
   unsigned cur_ve_flags = get_ve_flags(wp);
 
-  return cur_ve_flags == kOptVeFlagAll
-         || ((cur_ve_flags & kOptVeFlagBlock) && VIsual_active && VIsual_mode == Ctrl_V)
-         || ((cur_ve_flags & kOptVeFlagInsert) && (State & MODE_INSERT));
+  if (cur_ve_flags == kOptVeFlagAll
+      || ((cur_ve_flags & kOptVeFlagInsert) && (State & MODE_INSERT))) {
+    return true;
+  }
+
+  // While an operator is being executed we return "virtual_op", because
+  // Visual.active has already been reset, thus we can't check for "block"
+  // being used.
+  if (virtual_op != kNone) {
+    return virtual_op;
+  }
+  return (cur_ve_flags & kOptVeFlagBlock) && Visual.active && Visual.mode == Ctrl_V;
 }
 
 /// MODE_VISUAL, MODE_SELECT and MODE_OP_PENDING State are never set, they are
@@ -163,8 +163,8 @@ bool virtual_active(win_T *wp)
 int get_real_state(void)
 {
   if (State & MODE_NORMAL) {
-    if (VIsual_active) {
-      if (VIsual_select) {
+    if (Visual.active) {
+      if (Visual.select) {
         return MODE_SELECT;
       }
       return MODE_VISUAL;
@@ -184,12 +184,12 @@ void get_mode(char *buf)
 {
   int i = 0;
 
-  if (State == MODE_HITRETURN || State == MODE_ASKMORE
-      || State == MODE_SETWSIZE || State == MODE_CONFIRM) {
+  if (State == MODE_HITRETURN || State == MODE_ASKMORE || State == MODE_SETWSIZE
+      || ((State & MODE_CMDLINE) && get_cmdline_info()->one_key)) {
     buf[i++] = 'r';
     if (State == MODE_ASKMORE) {
       buf[i++] = 'm';
-    } else if (State == MODE_CONFIRM) {
+    } else if (State & MODE_CMDLINE) {
       buf[i++] = '?';
     }
   } else if (State == MODE_EXTERNCMD) {
@@ -220,12 +220,12 @@ void get_mode(char *buf)
     }
   } else if (State & MODE_TERMINAL) {
     buf[i++] = 't';
-  } else if (VIsual_active) {
-    if (VIsual_select) {
-      buf[i++] = (char)(VIsual_mode + 's' - 'v');
+  } else if (Visual.active) {
+    if (Visual.select) {
+      buf[i++] = (char)(Visual.mode + 's' - 'v');
     } else {
-      buf[i++] = (char)VIsual_mode;
-      if (restart_VIsual_select) {
+      buf[i++] = (char)Visual.mode;
+      if (Visual.restart_select) {
         buf[i++] = 's';
       }
     }

@@ -1,3 +1,4 @@
+---@diagnostic disable: no-unknown
 local mpack = vim.mpack
 
 local funcsfname = arg[1]
@@ -13,6 +14,7 @@ local hashpipe = assert(io.open(funcsfname, 'wb'))
 
 hashpipe:write([[
 #include "nvim/arglist.h"
+#include "nvim/channel.h"
 #include "nvim/cmdexpand.h"
 #include "nvim/cmdhist.h"
 #include "nvim/diff.h"
@@ -22,13 +24,17 @@ hashpipe:write([[
 #include "nvim/eval/deprecated.h"
 #include "nvim/eval/fs.h"
 #include "nvim/eval/funcs.h"
+#include "nvim/eval/list.h"
 #include "nvim/eval/typval.h"
 #include "nvim/eval/vars.h"
 #include "nvim/eval/window.h"
 #include "nvim/ex_docmd.h"
 #include "nvim/ex_getln.h"
 #include "nvim/fold.h"
-#include "nvim/getchar.h"
+#include "nvim/fuzzy.h"
+#include "nvim/indent.h"
+#include "nvim/indent_c.h"
+#include "nvim/input.h"
 #include "nvim/insexpand.h"
 #include "nvim/mapping.h"
 #include "nvim/match.h"
@@ -39,29 +45,41 @@ hashpipe:write([[
 #include "nvim/quickfix.h"
 #include "nvim/runtime.h"
 #include "nvim/search.h"
+#include "nvim/sign.h"
 #include "nvim/state.h"
 #include "nvim/strings.h"
-#include "nvim/sign.h"
 #include "nvim/testing.h"
 #include "nvim/undo.h"
 
 ]])
 
 local funcs = loadfile(eval_file)().funcs
-for _, func in pairs(funcs) do
-  if func.float_func then
+for name, func in pairs(funcs) do
+  local n = (func.func_float and 1 or 0) + (func.func_lua and 1 or 0) + (func.func and 1 or 0)
+  assert(n <= 1, name .. ': only one of func, func_float, func_lua can be set')
+
+  if func.func_float then
     func.func = 'float_op_wrapper'
-    func.data = '{ .float_func = &' .. func.float_func .. ' }'
+    func.data = '{ .func_float = &' .. func.func_float .. ' }'
+  elseif func.func_lua then
+    func.func = 'lua_wrapper'
+    func.data = '{ .func_lua = "' .. func.func_lua .. '" }'
   end
 end
 
 local metadata = mpack.decode(io.open(metadata_file, 'rb'):read('*all'))
 for _, fun in ipairs(metadata) do
   if fun.eval then
+    local args
+    if type(fun.opts_idx) == 'number' then
+      args = { fun.opts_idx - 1, #fun.parameters }
+    else
+      args = #fun.parameters
+    end
     funcs[fun.name] = {
-      args = #fun.parameters,
+      args = args,
       func = 'api_wrapper',
-      data = '{ .api_handler = &method_handlers[' .. fun.handler_id .. '] }',
+      data = '{ .func_api = &method_handlers[' .. fun.handler_id .. '] }',
     }
   end
 end
@@ -84,11 +102,14 @@ hashpipe:write('static const EvalFuncDef functions[] = {\n')
 
 for _, name in ipairs(neworder) do
   local def = funcs[name]
-  local args = def.args or 0
-  if type(args) == 'number' then
-    args = { args, args }
-  elseif #args == 1 then
-    args[2] = 'MAX_FUNC_ARGS'
+  local min_args = 0
+  local max_args = 0 --- @type integer|string
+  local def_args = def.args
+  if type(def_args) == 'number' then
+    min_args, max_args = def_args, def_args
+  elseif type(def_args) == 'table' then
+    min_args = def_args[1] or 0
+    max_args = def_args[2] or 'MAX_FUNC_ARGS'
   end
   local base = def.base or 'BASE_NONE'
   local func = def.func or ('f_' .. name)
@@ -97,8 +118,8 @@ for _, name in ipairs(neworder) do
   hashpipe:write(
     ('  { "%s", %s, %s, %s, %s, &%s, %s },\n'):format(
       name,
-      args[1],
-      args[2],
+      min_args,
+      max_args,
       base,
       fast,
       func,

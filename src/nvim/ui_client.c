@@ -7,14 +7,12 @@
 
 #include "nvim/api/keysets_defs.h"
 #include "nvim/api/private/defs.h"
-#include "nvim/api/private/dispatch.h"
 #include "nvim/api/private/helpers.h"
 #include "nvim/channel.h"
 #include "nvim/channel_defs.h"
-#include "nvim/eval.h"
-#include "nvim/eval/typval.h"
 #include "nvim/eval/typval_defs.h"
 #include "nvim/event/multiqueue.h"
+#include "nvim/event/socket.h"
 #include "nvim/globals.h"
 #include "nvim/highlight.h"
 #include "nvim/highlight_defs.h"
@@ -25,7 +23,6 @@
 #include "nvim/msgpack_rpc/channel.h"
 #include "nvim/msgpack_rpc/channel_defs.h"
 #include "nvim/os/os.h"
-#include "nvim/os/os_defs.h"
 #include "nvim/profile.h"
 #include "nvim/tui/tui.h"
 #include "nvim/tui/tui_defs.h"
@@ -42,23 +39,19 @@ static int tui_width = 0;
 static int tui_height = 0;
 static char *tui_term = "";
 static bool tui_rgb = false;
-static bool ui_client_is_remote = false;
 
 // uncrustify:off
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "ui_client.c.generated.h"
-# include "ui_events_client.generated.h"
-#endif
+#include "ui_client.c.generated.h"
+#include "ui_events_client.generated.h"
 // uncrustify:on
 
-uint64_t ui_client_start_server(int argc, char **argv)
+uint64_t ui_client_start_server(const char *exepath, size_t argc, char **argv)
 {
-  varnumber_T exit_status;
-  char **args = xmalloc(((size_t)(2 + argc)) * sizeof(char *));
+  char **args = xmalloc((2 + argc) * sizeof(char *));
   int args_idx = 0;
   args[args_idx++] = xstrdup(argv[0]);
   args[args_idx++] = xstrdup("--embed");
-  for (int i = 1; i < argc; i++) {
+  for (size_t i = 1; i < argc; i++) {
     args[args_idx++] = xstrdup(argv[i]);
   }
   args[args_idx++] = NULL;
@@ -66,13 +59,9 @@ uint64_t ui_client_start_server(int argc, char **argv)
   CallbackReader on_err = CALLBACK_READER_INIT;
   on_err.fwd_err = true;
 
-#ifdef MSWIN
-  // TODO(justinmk): detach breaks `tt.setup_child_nvim` tests on Windows?
-  bool detach = os_env_exists("__NVIM_DETACH", true);
-#else
   bool detach = true;
-#endif
-  Channel *channel = channel_job_start(args, get_vim_var_str(VV_PROGPATH),
+  varnumber_T exit_status;
+  Channel *channel = channel_job_start(args, exepath,
                                        CALLBACK_READER_INIT, on_err, CALLBACK_NONE,
                                        false, true, true, detach, kChannelStdinPipe,
                                        NULL, 0, 0, NULL, &exit_status);
@@ -111,13 +100,11 @@ void ui_client_attach(int width, int height, char *term, bool rgb)
     PUT_C(opts, "term_name", CSTR_AS_OBJ(term));
   }
   PUT_C(opts, "term_colors", INTEGER_OBJ(t_colors));
-  if (!ui_client_is_remote) {
-    PUT_C(opts, "stdin_tty", BOOLEAN_OBJ(stdin_isatty));
-    PUT_C(opts, "stdout_tty", BOOLEAN_OBJ(stdout_isatty));
-    if (ui_client_forward_stdin) {
-      PUT_C(opts, "stdin_fd", INTEGER_OBJ(UI_CLIENT_STDIN_FD));
-      ui_client_forward_stdin = false;  // stdin shouldn't be forwarded again #22292
-    }
+  PUT_C(opts, "stdin_tty", BOOLEAN_OBJ(stdin_isatty));
+  PUT_C(opts, "stdout_tty", BOOLEAN_OBJ(stdout_isatty));
+  if (ui_client_forward_stdin) {
+    PUT_C(opts, "stdin_fd", INTEGER_OBJ(UI_CLIENT_STDIN_FD));
+    ui_client_forward_stdin = false;  // stdin shouldn't be forwarded again #22292
   }
   ADD_C(args, DICT_OBJ(opts));
 
@@ -165,15 +152,14 @@ void ui_client_detach(void)
   ui_client_attached = false;
 }
 
-void ui_client_run(bool remote_ui)
+void ui_client_run(void)
   FUNC_ATTR_NORETURN
 {
-  ui_client_is_remote = remote_ui;
   tui_start(&tui, &tui_width, &tui_height, &tui_term, &tui_rgb);
   ui_client_attach(tui_width, tui_height, tui_term, tui_rgb);
 
   // TODO(justinmk): this is for log_spec. Can remove this after nvim_log #7062 is merged.
-  if (os_env_exists("__NVIM_TEST_LOG", true)) {
+  if (os_env_exists(ENV_TEST_LOG, true)) {
     ELOG("test log message");
   }
 
@@ -181,7 +167,9 @@ void ui_client_run(bool remote_ui)
 
   // os_exit() will be invoked when the client channel detaches
   while (true) {
-    LOOP_PROCESS_EVENTS(&main_loop, resize_events, -1);
+    // Need to process main_loop.events,
+    // otherwise channels closed due to server restart are never freed.
+    LOOP_PROCESS_EVENTS(&main_loop, main_loop.events, -1);
   }
 }
 
@@ -235,7 +223,7 @@ static HlAttrs ui_client_dict2hlattrs(Dict d, bool rgb)
     return HLATTRS_INIT;
   }
 
-  HlAttrs attrs = dict2hlattrs(&dict, rgb, NULL, &err);
+  HlAttrs attrs = dict2hlattrs(&dict, rgb, NULL, NULL, &err);
 
   if (HAS_KEY(&dict, highlight, url)) {
     attrs.url = tui_add_url(tui, dict.url.data);
@@ -287,57 +275,151 @@ void ui_client_event_raw_line(GridLineEvent *g)
                (const schar_T *)grid_line_buf_char, grid_line_buf_attr);
 }
 
-/// Restarts the embedded server without killing the UI.
+/// Handles the "connect" ui-event.
+void ui_client_event_connect(Array args)
+{
+  if (args.size < 1 || args.items[0].type != kObjectTypeString) {
+    ELOG("Error handling UI event 'connect'");
+    return;
+  }
+
+  String s = args.items[0].data.string;
+  char *server_addr = xmemdupz(s.data, s.size);
+  multiqueue_put(main_loop.fast_events, channel_connect_event, server_addr);
+  // Set a dummy channel ID to prevent client exit when server detaches.
+  ui_client_channel_id = UINT64_MAX;
+}
+
+static void channel_connect_event(void **argv)
+{
+  char *server_addr = argv[0];
+
+  const char *err = "";
+  bool is_tcp = socket_address_tcp_host_end(server_addr) != NULL;
+  CallbackReader on_data = CALLBACK_READER_INIT;
+  uint64_t chan = channel_connect(is_tcp, server_addr, true, on_data, 50, &err);
+
+  if (!strequal(err, "")) {
+    ELOG("Cannot connect to server %s: %s", server_addr, err);
+    xfree(server_addr);
+    ui_client_exit_status = 1;
+    os_exit(1);
+  }
+
+  ui_client_channel_id = chan;
+  ui_client_attach(tui_width, tui_height, tui_term, tui_rgb);
+
+  ILOG("Connected to server %s on channel %" PRId64, server_addr, chan);
+  xfree(server_addr);
+}
+
+/// When a "restart" ui-event is received, its arguments are saved here when
+/// waiting for the server to exit.
+static Array restart_args = ARRAY_DICT_INIT;
+static bool restart_pending = false;
+
+// A server might indicate in advance how a new server should be restarted
+// in cases it crashes due to an unexpected error.
+static Array restart_args_after_crash_exit = ARRAY_DICT_INIT;
+
+/// Handles the "restart" ui-event.
 void ui_client_event_restart(Array args)
 {
-  // 1. Client-side server detach.
-  ui_client_detach();
+  // NB: don't send nvim_ui_detach to server, as it may have already exited.
+  // ui_client_detach();
 
-  // 2. Close ui client channel (auto kills the `nvim --embed` server due to self-exit).
-  const char *error;
-  bool success = channel_close(ui_client_channel_id, kChannelPartAll, &error);
-  if (!success) {
-    ELOG("%s", error);
-    return;
-  }
+  // Save the arguments for ui_client_attach_to_restarted_server() later.
+  api_free_array(restart_args);
+  restart_args = copy_array(args, NULL);
+  restart_pending = true;
+}
 
-  // 3. Get v:argv.
-  typval_T *tv = get_vim_var_tv(VV_ARGV);
-  if (tv->v_type != VAR_LIST || tv->vval.v_list == NULL) {
-    ELOG("failed to get vim var typval");
-    return;
-  }
-  list_T *l = tv->vval.v_list;
-  int argc = tv_list_len(l);
+void ui_client_event__set_restart_on_crash_exit(Array args)
+{
+  // Save the arguments for ui_client_may_restart_server() later.
+  api_free_array(restart_args_after_crash_exit);
+  restart_args_after_crash_exit = copy_array(args, NULL);
+}
 
-  // Assert to be positive for safe conversion to size_t.
-  assert(argc > 0);
-
-  char **argv = xmalloc(sizeof(char *) * ((size_t)argc + 1));
-  listitem_T *li = tv_list_first(l);
-  for (int i = 0; i < argc && li != NULL; i++, li = TV_LIST_ITEM_NEXT(l, li)) {
-    if (TV_LIST_ITEM_TV(li)->v_type == VAR_STRING && TV_LIST_ITEM_TV(li)->vval.v_string != NULL) {
-      argv[i] = TV_LIST_ITEM_TV(li)->vval.v_string;
+/// Called during "restart" when the old server just exited.
+void ui_client_attach_to_restarted_server(bool error_restart)
+{
+  Array args = restart_args;
+  bool start_server = false;  // Server crashed; start one ourselves (`_set_restart_on_crash_exit`).
+  if (!restart_pending) {
+    if (error_restart && ui_client_error_exit == -1 && restart_args_after_crash_exit.size > 0) {
+      start_server = true;
+      args = restart_args_after_crash_exit;
     } else {
-      argv[i] = "";
+      return;
     }
   }
-  argv[argc] = NULL;
 
-  // 4. Start a new `nvim --embed` server.
-  uint64_t rv = ui_client_start_server(argc, argv);
-  if (!rv) {
-    ELOG("failed to start nvim server");
+  restart_pending = false;
+
+  if (args.size < 1 || args.items[0].type != kObjectTypeString) {
+    ELOG("Error handling ui event 'restart'");
     goto cleanup;
   }
 
-  // 5. Client-side server re-attach.
-  ui_client_channel_id = rv;
+  uint64_t chan_id;
+  const char *first_arg = args.items[0].data.string.data;
+  if (start_server) {  // Restart after server crash.
+    if (args.size < 2 || args.items[1].type != kObjectTypeArray) {
+      ELOG("Error handling ui event 'restart'");
+      goto cleanup;
+    }
+    Array cmdargs = args.items[1].data.array;
+    char **argv = xcalloc(cmdargs.size + 1, sizeof(char *));
+    for (size_t i = 0; i < cmdargs.size; i++) {
+      if (cmdargs.items[i].type == kObjectTypeString) {
+        argv[i] = cmdargs.items[i].data.string.data;
+      }
+      if (argv[i] == NULL) {
+        argv[i] = "";
+      }
+    }
+    chan_id = ui_client_start_server(first_arg, cmdargs.size, argv);
+    xfree(argv);
+    ui_client_error_exit = -1;
+  } else {  // "restart" UI event: connect to the new server.
+    bool is_tcp = socket_address_tcp_host_end(first_arg) != NULL;
+    const char *err = NULL;
+    chan_id = channel_connect(is_tcp, first_arg, true, CALLBACK_READER_INIT, 50, &err);
+    if (err != NULL) {
+      ELOG("cannot connect to server %s: %s", first_arg, err);
+      goto cleanup;
+    }
+    if (args.size > 1 && args.items[1].type == kObjectTypeDict) {
+      // Restore channel properties after restart. Before attach, so `:detach!` in user config wins.
+      MAXSIZE_TEMP_ARRAY(chan_args, 2);
+      ADD_C(chan_args, INTEGER_OBJ(0));
+      ADD_C(chan_args, args.items[1]);
+      rpc_send_event(chan_id, "nvim_chan_set", chan_args);
+    }
+  }
+
+  // Client-side server re-attach.
+  ui_client_channel_id = chan_id;
   ui_client_attach(tui_width, tui_height, tui_term, tui_rgb);
 
-  ILOG("restarted server id=%" PRId64, rv);
+  ILOG("restarted server address=%s id=%" PRId64, first_arg, chan_id);
 cleanup:
-  xfree(argv);
+  api_free_array(restart_args);
+  restart_args = (Array)ARRAY_DICT_INIT;
+  api_free_array(restart_args_after_crash_exit);
+  restart_args_after_crash_exit = (Array)ARRAY_DICT_INIT;
+}
+
+/// Handles the "error_exit" ui-event.
+void ui_client_event_error_exit(Array args)
+{
+  if (args.size < 1
+      || args.items[0].type != kObjectTypeInteger) {
+    ELOG("Error handling ui event 'error_exit'");
+    return;
+  }
+  ui_client_error_exit = (int)args.items[0].data.integer;
 }
 
 #ifdef EXITFREE

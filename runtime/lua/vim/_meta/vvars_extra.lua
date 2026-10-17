@@ -1,4 +1,5 @@
 --- @meta _
+-- This file is NOT generated, edit it directly. See also _meta/vvars.gen.lua.
 error('Cannot require a meta file')
 
 --- Extra types for vim.v dictionary fields
@@ -53,27 +54,26 @@ error('Cannot require a meta file')
 --- `v:event.operator` is "y".
 --- @field operator? string
 --- Text stored in the register as a |readfile()|-style list of lines.
---- @field regcontents? string
+--- @field regcontents? string|string[]
 --- Requested register (e.g "x" for "xyy) or the empty string for an unnamed operation.
 --- @field regname? string
 --- @field regtype? string Type of register as returned by |getregtype()|.
 --- @field visual? boolean Selection is visual (as opposed to, e.g., via motion).
---- @field completed_item? vim.v.completed_item
 --- Current selected complete item on |CompleteChanged|, Is `{}` when no
 --- complete item selected.
---- @field height? integer
---- @field width? integer Height of popup menu on |CompleteChanged|
---- @field row? integer Width of popup menu on |CompleteChanged|
---- Col count of popup menu on |CompleteChanged|, relative to screen.
---- @field col? integer
+--- @field completed_item? vim.v.completed_item
+--- @field height? integer Height of popup menu on |CompleteChanged|
+--- @field width? integer Width of popup menu on |CompleteChanged|
+--- @field row? integer Row count of popup menu on |CompleteChanged|, relative to screen.
+--- @field col? integer Col count of popup menu on |CompleteChanged|, relative to screen.
 --- @field size? integer Total number of completion items on |CompleteChanged|.
 --- Is |v:true| if popup menu have scrollbar, or |v:false| if not.
 --- @field scrollbar? boolean
 --- Is |v:true| if the event fired while changing window  (or tab) on |DirChanged|.
 --- @field changed_window? boolean
---- @field status? boolean Job status or exit code, -1 means "unknown". |TermClose|
+--- @field status? integer Job status or exit code, -1 means "unknown". |TermClose|
 --- @field reason? string Reason for completion being done. |CompleteDone|
---- The word that was selected, empty if abandoned complete. @field complete_word? string
 --- @field complete_type? string See |complete_info_mode|
+--- @field complete_word? string The word that was selected, empty if abandoned complete.
 --- List of window IDs that changed on |WinResized|
 --- @field windows? integer[]

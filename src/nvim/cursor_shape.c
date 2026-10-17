@@ -18,9 +18,7 @@
 #include "nvim/strings.h"
 #include "nvim/ui.h"
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "cursor_shape.c.generated.h"
-#endif
+#include "cursor_shape.c.generated.h"
 
 static const char e_digit_expected[] = N_("E548: Digit expected");
 
@@ -147,7 +145,7 @@ const char *parse_shape_opt(int what)
             all_idx = SHAPE_IDX_COUNT - 1;
           } else {
             for (idx = 0; idx < SHAPE_IDX_COUNT; idx++) {
-              if (STRNICMP(modep, shape_table[idx].name, len) == 0) {
+              if (STRNICMP(modep, shape_table[idx].name, (size_t)len) == 0) {
                 break;
               }
             }
@@ -273,18 +271,6 @@ const char *parse_shape_opt(int what)
   return NULL;
 }
 
-/// Returns true if the cursor is non-blinking "block" shape during
-/// visual selection.
-///
-/// @param exclusive If 'selection' option is "exclusive".
-bool cursor_is_block_during_visual(bool exclusive)
-  FUNC_ATTR_PURE
-{
-  int mode_idx = exclusive ? SHAPE_IDX_VE : SHAPE_IDX_V;
-  return (SHAPE_BLOCK == shape_table[mode_idx].shape
-          && 0 == shape_table[mode_idx].blinkon);
-}
-
 /// Map cursor mode from string to integer
 ///
 /// @param mode Fullname of the mode whose id we are looking for
@@ -340,7 +326,7 @@ int cursor_get_mode_idx(void)
     }
   } else if (finish_op) {
     return SHAPE_IDX_O;
-  } else if (VIsual_active) {
+  } else if (Visual.active) {
     if (*p_sel == 'e') {
       return SHAPE_IDX_VE;
     } else {

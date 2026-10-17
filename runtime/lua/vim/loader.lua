@@ -7,6 +7,7 @@ local loaders = package.loaders
 local _loadfile = loadfile
 
 local VERSION = 4
+local is_appimage = (os.getenv('APPIMAGE') ~= nil)
 
 local M = {}
 
@@ -45,7 +46,9 @@ local M = {}
 --- The fs_stat of the module path. Won't be returned for `modname="*"`
 --- @field stat? uv.fs_stat.result
 
---- @alias vim.loader.Stats table<string, {total:number, time:number, [string]:number?}?>
+--- @class (private) vim.loader.Stats
+--- @field [string] {total:number, time:number, [string]:number?}?>
+--- @field find {total:number, time:number, not_found:number, stat?:number}
 
 --- @private
 M.path = vim.fn.stdpath('cache') .. '/luac'
@@ -59,14 +62,14 @@ local stats = { find = { total = 0, time = 0, not_found = 0 } }
 --- @type table<string, uv.fs_stat.result>?
 local fs_stat_cache
 
---- @type table<string, table<string,vim.loader.ModuleInfo>>
+--- @type table<string, table<string,vim.loader.ModuleInfo>?>
 local indexed = {}
 
 --- @param path string
 --- @return uv.fs_stat.result?
 local function fs_stat_cached(path)
   if not fs_stat_cache then
-    return uv.fs_stat(path)
+    return (uv.fs_stat(path))
   end
 
   if not fs_stat_cache[path] then
@@ -77,8 +80,9 @@ local function fs_stat_cached(path)
   return fs_stat_cache[path]
 end
 
+--- @param path string
 local function normalize(path)
-  return fs.normalize(path, { expand_env = false, _fast = true })
+  return fs.normalize(path, { plain = true, _fast = true })
 end
 
 local rtp_cached = {} --- @type string[]
@@ -116,6 +120,12 @@ end
 --- @param name string can be a module name, or a file name
 --- @return string file_name
 local function cache_filename(name)
+  if is_appimage then
+    -- Avoid cache pollution caused by AppImage randomizing the program root. #31165
+    -- "/tmp/.mount_nvimAmpHPH/usr/share/nvim/runtime" => "/usr/share/nvim/runtime"
+    name = name:match('(/usr/.*)') or name
+  end
+
   local ret = ('%s/%s'):format(M.path, uri_encode(name, 'rfc2396'))
   return ret:sub(-4) == '.lua' and (ret .. 'c') or (ret .. '.luac')
 end
@@ -165,15 +175,22 @@ local function read_cachefile(cname)
     return
   end
 
-  --- @type integer[]|{[0]:integer}
   local header = vim.split(data:sub(1, zero - 1), ',')
-  if tonumber(header[1]) ~= VERSION then
+  local version = vim._tointeger(header[1])
+  if version ~= VERSION then
+    return
+  end
+
+  local size = vim._tointeger(header[2])
+  local sec = vim._tointeger(header[3])
+  local nsec = vim._tointeger(header[4])
+  if not (size and sec and nsec) then
     return
   end
 
   local hash = {
-    size = tonumber(header[2]),
-    mtime = { sec = tonumber(header[3]), nsec = tonumber(header[4]) },
+    size = size,
+    mtime = { sec = sec, nsec = nsec },
   }
 
   local chunk = data:sub(zero + 1)
@@ -239,9 +256,10 @@ end
 --- @param filename? string
 --- @param mode? "b"|"t"|"bt"
 --- @param env? table
---- @return function?, string?  error_message
+--- @return_overload function chunk
+--- @return_overload nil, string error_message
 local function loadfile_cached(filename, mode, env)
-  local modpath = normalize(filename)
+  local modpath = normalize(assert(filename))
   local stat = fs_stat_cached(modpath)
   local cname = cache_filename(modpath)
   if stat then
@@ -270,7 +288,7 @@ local function lsmod(path)
     for name, t in fs.dir(path .. '/lua') do
       local modpath = path .. '/lua/' .. name
       -- HACK: type is not always returned due to a bug in luv
-      t = t or fs_stat_cached(modpath).type
+      t = t or assert(fs_stat_cached(modpath)).type
       --- @type string
       local topname
       local ext = name:sub(-4)
@@ -422,7 +440,8 @@ function M.enable(enable)
   M.enabled = enable
 
   if enable then
-    vim.fn.mkdir(vim.fn.fnamemodify(M.path, ':p'), 'p')
+    vim.fn.mkdir(fs.abspath(M.path), 'p')
+    ---@diagnostic disable-next-line: global-in-non-module
     _G.loadfile = loadfile_cached
     -- add Lua loader
     table.insert(loaders, 2, loader_cached)
@@ -436,8 +455,10 @@ function M.enable(enable)
       end
     end
   else
+    ---@diagnostic disable-next-line: global-in-non-module
     _G.loadfile = _loadfile
-    for l, loader in ipairs(loaders) do
+    for l = #loaders, 1, -1 do
+      local loader = loaders[l]
       if loader == loader_cached or loader == loader_lib_cached then
         table.remove(loaders, l)
       end
@@ -446,19 +467,14 @@ function M.enable(enable)
   end
 end
 
---- @deprecated
-function M.disable()
-  vim.deprecate('vim.loader.disable', 'vim.loader.enable(false)', '0.12')
-  vim.loader.enable(false)
-end
-
 --- Tracks the time spent in a function
 --- @generic F: function
+--- @param stat string
 --- @param f F
 --- @return F
 local function track(stat, f)
   return function(...)
-    local start = vim.uv.hrtime()
+    local start = uv.hrtime()
     local r = { f(...) }
     stats[stat] = stats[stat] or { total = 0, time = 0 }
     stats[stat].total = stats[stat].total + 1
@@ -485,7 +501,7 @@ function M._profile(opts)
 
   if opts and opts.loaders then
     for l, loader in pairs(loaders) do
-      local loc = debug.getinfo(loader, 'Sn').source:sub(2)
+      local loc = assert(debug.getinfo(loader, 'Sn')).source:gsub('^@', '')
       loaders[l] = track('loader ' .. l .. ': ' .. loc, loader)
     end
   end
@@ -497,13 +513,14 @@ end
 --- @private
 function M._inspect(opts)
   if opts and opts.print then
+    --- @param nsec number
     local function ms(nsec)
       return math.floor(nsec / 1e6 * 1000 + 0.5) / 1000 .. 'ms'
     end
-    local chunks = {} --- @type string[][]
-    for _, stat in vim.spairs(stats) do
+    local chunks = {} --- @type [string, string?][]
+    for name, stat in vim.spairs(stats) do
       vim.list_extend(chunks, {
-        { '\n' .. stat .. '\n', 'Title' },
+        { '\n' .. name .. '\n', 'Title' },
         { '* total:    ' },
         { tostring(stat.total) .. '\n', 'Number' },
         { '* time:     ' },
@@ -518,7 +535,7 @@ function M._inspect(opts)
         end
       end
     end
-    vim.api.nvim_echo(chunks, true, {})
+    vim.api.nvim_echo(chunks, true)
   end
   return stats
 end

@@ -23,18 +23,19 @@ set cpo&vim
 "  Public Interface: {{{1
 augroup tar
   au!
-  au BufReadCmd   tarfile::*	call tar#Read(expand("<amatch>"), 1)
-  au FileReadCmd  tarfile::*	call tar#Read(expand("<amatch>"), 0)
+  au BufReadCmd   tarfile::*	call tar#Read(expand("<amatch>"))
+  au FileReadCmd  tarfile::*	call tar#Read(expand("<amatch>"))
   au BufWriteCmd  tarfile::*	call tar#Write(expand("<amatch>"))
   au FileWriteCmd tarfile::*	call tar#Write(expand("<amatch>"))
 
   if has("unix")
-   au BufReadCmd   tarfile::*/*	call tar#Read(expand("<amatch>"), 1)
-   au FileReadCmd  tarfile::*/*	call tar#Read(expand("<amatch>"), 0)
+   au BufReadCmd   tarfile::*/*	call tar#Read(expand("<amatch>"))
+   au FileReadCmd  tarfile::*/*	call tar#Read(expand("<amatch>"))
    au BufWriteCmd  tarfile::*/*	call tar#Write(expand("<amatch>"))
    au FileWriteCmd tarfile::*/*	call tar#Write(expand("<amatch>"))
   endif
 
+  au BufReadCmd   *.cbt			call tar#Browse(expand("<amatch>"))
   au BufReadCmd   *.lrp			call tar#Browse(expand("<amatch>"))
   au BufReadCmd   *.tar			call tar#Browse(expand("<amatch>"))
   au BufReadCmd   *.tar.bz2		call tar#Browse(expand("<amatch>"))

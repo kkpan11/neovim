@@ -2,6 +2,7 @@ local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
+local describe, it, before_each = t.describe, t.it, t.before_each
 local api, clear, eq = n.api, n.clear, t.eq
 local eval, exec, feed = n.eval, n.exec, n.feed
 local exec_lua = n.exec_lua
@@ -161,7 +162,7 @@ describe('Signs', function()
       exec('set cursorline cursorlineopt=line')
       screen:expect([[
         {101:>>}a                                                  |
-        {101:>>}{21:^b                                                  }|
+        {9:>>}{21:^b                                                  }|
         {101:>>}c                                                  |
         {1:~                                                    }|*10
                                                              |
@@ -446,13 +447,12 @@ describe('Signs', function()
       feed(':sign place<cr>')
       screen:expect([[
         {101:>>}                                                   |
-        {1:~                                                    }|*6
+        {1:~                                                    }|*7
         {3:                                                     }|
         :sign place                                          |
         {100:--- Signs ---}                                        |
-        {18:Signs for [NULL]:}                                    |
+        {18:Signs for Untitled:}                                  |
             line=1  id=100000  name=piet  priority=10        |
-                                                             |
         {6:Press ENTER or type command to continue}^              |
       ]])
 
@@ -554,9 +554,10 @@ describe('Signs', function()
     ]])
     exec('norm 2Gdd')
     exec('silent undo')
+    -- Nvim: undo restores the cursor to where "2Gdd" started (|restore-undo-cursor|).
     screen:expect([[
-      {7:  }1                                                  |
-      {7:S1}^2                                                  |
+      {7:  }^1                                                  |
+      {7:S1}2                                                  |
       {7:  }3                                                  |
       {7:  }4                                                  |
       {1:~                                                    }|*9
@@ -688,5 +689,54 @@ describe('Signs', function()
     api.nvim_buf_set_extmark(0, api.nvim_create_namespace(''), 1, 0, { sign_text = 's' })
     api.nvim_buf_set_lines(0, 0, -1, false, {})
     n.assert_alive()
+  end)
+
+  it("with line that doesn't fit in window", function()
+    screen:try_resize(40, 9)
+    api.nvim_set_option_value('foldcolumn', '1', {})
+    api.nvim_set_option_value('number', true, {})
+    api.nvim_set_option_value('signcolumn', 'yes:2', {})
+    api.nvim_set_hl(0, 'FoldColumn', { link = 'StatusLine' })
+    api.nvim_buf_set_lines(
+      0,
+      0,
+      -1,
+      false,
+      { ('a'):rep(90), ('b'):rep(90), ('c'):rep(90), ('d'):rep(90), ('e'):rep(90) }
+    )
+    screen:expect([[
+      {3: }{7:    }{8:  1 }^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+      {3: }{7:    }{8:    }aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+      {3: }{7:    }{8:    }aaaaaaaaaaaaaaaaaaaaaaaaaaaa   |
+      {3: }{7:    }{8:  2 }bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|
+      {3: }{7:    }{8:    }bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|
+      {3: }{7:    }{8:    }bbbbbbbbbbbbbbbbbbbbbbbbbbbb   |
+      {3: }{7:    }{8:  3 }ccccccccccccccccccccccccccccccc|
+      {3: }{7:    }{8:    }cccccccccccccccccccccccccccc{1:@@@}|
+                                              |
+    ]])
+    api.nvim_set_option_value('display', 'truncate', {})
+    screen:expect([[
+      {3: }{7:    }{8:  1 }^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+      {3: }{7:    }{8:    }aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+      {3: }{7:    }{8:    }aaaaaaaaaaaaaaaaaaaaaaaaaaaa   |
+      {3: }{7:    }{8:  2 }bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|
+      {3: }{7:    }{8:    }bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|
+      {3: }{7:    }{8:    }bbbbbbbbbbbbbbbbbbbbbbbbbbbb   |
+      {3: }{7:    }{8:  3 }ccccccccccccccccccccccccccccccc|
+      {1:@@@                                     }|
+                                              |
+    ]])
+    api.nvim_set_option_value('display', '', {})
+    screen:expect([[
+      {3: }{7:    }{8:  1 }^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+      {3: }{7:    }{8:    }aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|
+      {3: }{7:    }{8:    }aaaaaaaaaaaaaaaaaaaaaaaaaaaa   |
+      {3: }{7:    }{8:  2 }bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|
+      {3: }{7:    }{8:    }bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|
+      {3: }{7:    }{8:    }bbbbbbbbbbbbbbbbbbbbbbbbbbbb   |
+      {3: }{7:    }{8:    }{1:@                              }|*2
+                                              |
+    ]])
   end)
 end)

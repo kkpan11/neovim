@@ -8,6 +8,7 @@ local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
+local describe, it = t.describe, t.it
 describe('default', function()
   describe('autocommands', function()
     it('nvim.terminal.TermClose closes terminal with default shell on success', function()
@@ -19,12 +20,11 @@ describe('default', function()
       n.command('let g:n=0')
       n.command('au BufEnter * let g:n = g:n + 1')
 
-      n.command('terminal')
-      t.eq(1, n.eval('get(g:, "n", 0)'))
+      t.eq(1, n.exec_lua('vim.cmd.terminal(); return vim.g.n'))
 
       t.retry(nil, 1000, function()
         t.neq('terminal', n.api.nvim_get_option_value('buftype', { buf = 0 }))
-        t.eq(2, n.eval('get(g:, "n", 0)'))
+        t.eq(2, n.eval('g:n'))
       end)
     end)
   end)
@@ -101,8 +101,8 @@ describe('default', function()
         screen:set_default_attr_ids({
           [1] = { foreground = Screen.colors.NvimDarkGray4 },
           [2] = {
-            foreground = Screen.colors.NvimDarkGray3,
-            background = Screen.colors.NvimLightGray3,
+            foreground = Screen.colors.NvimLightGray2,
+            background = Screen.colors.NvimDarkGray4,
           },
           [3] = {
             foreground = Screen.colors.NvimLightGrey1,
@@ -180,8 +180,8 @@ describe('default', function()
         screen:set_default_attr_ids({
           [1] = { foreground = Screen.colors.NvimDarkGrey4 },
           [2] = {
-            background = Screen.colors.NvimLightGray3,
-            foreground = Screen.colors.NvimDarkGrey3,
+            background = Screen.colors.NvimDarkGrey4,
+            foreground = Screen.colors.NvimLightGray2,
           },
         })
         screen:expect({
@@ -200,8 +200,8 @@ describe('default', function()
         screen:set_default_attr_ids({
           [1] = { foreground = Screen.colors.NvimDarkGray4 },
           [2] = {
-            background = Screen.colors.NvimLightGrey3,
-            foreground = Screen.colors.NvimDarkGray3,
+            background = Screen.colors.NvimDarkGray4,
+            foreground = Screen.colors.NvimLightGrey2,
           },
           [3] = { foreground = Screen.colors.NvimLightRed },
           [4] = { foreground = Screen.colors.NvimLightCyan },

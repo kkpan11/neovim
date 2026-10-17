@@ -21,10 +21,8 @@ typedef struct {
 
 #define KEYVALUE_ENTRY(k, v) { (k), (v), STRLEN_LITERAL(v) }
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "strings.h.generated.h"
-# include "strings.h.inline.generated.h"
-#endif
+#include "strings.h.generated.h"
+#include "strings.h.inline.generated.h"
 
 /// Append string to string and return pointer to the next byte
 ///
@@ -54,12 +52,12 @@ static inline char *strappend(char *const dst, const char *const src)
 #endif
 
 #ifdef HAVE_STRNCASECMP
-# define STRNICMP(d, s, n)  strncasecmp((char *)(d), (char *)(s), (size_t)(n))
+# define STRNICMP(d, s, n)  strncasecmp((char *)(d), (char *)(s), (n))
 #else
 # ifdef HAVE_STRNICMP
-#  define STRNICMP(d, s, n) strnicmp((char *)(d), (char *)(s), (size_t)(n))
+#  define STRNICMP(d, s, n) strnicmp((char *)(d), (char *)(s), (n))
 # else
-#  define STRNICMP(d, s, n) vim_strnicmp((char *)(d), (char *)(s), (size_t)(n))
+#  define STRNICMP(d, s, n) vim_strnicmp((char *)(d), (char *)(s), (n))
 # endif
 #endif
 

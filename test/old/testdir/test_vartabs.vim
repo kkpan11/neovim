@@ -295,13 +295,19 @@ func Test_vartabs_linebreak()
 
   let expect = ['          x                             ',
         \       'x                   x                   ',
-        \       'x                                       ']
+        \       '                    x                   ']
   let lines = ScreenLines([1, 3], winwidth(0))
   call s:compare_lines(expect, lines)
   setl list listchars=tab:>-
   let expect = ['>---------x>------------------          ',
         \       'x>------------------x>------------------',
-        \       'x                                       ']
+        \       '--------------------x                   ']
+  let lines = ScreenLines([1, 3], winwidth(0))
+  call s:compare_lines(expect, lines)
+  setl nolinebreak
+  let expect = ['>---------x>------------------x>--------',
+        \       '--------------------x>------------------',
+        \       '--------------------x                   ']
   let lines = ScreenLines([1, 3], winwidth(0))
   call s:compare_lines(expect, lines)
   setl linebreak vartabstop=40
@@ -387,14 +393,14 @@ func Test_vartabs_shiftwidth()
 endfunc
 
 func Test_vartabs_failures()
-  call assert_fails('set vts=8,')
-  call assert_fails('set vsts=8,')
-  call assert_fails('set vts=8,,8')
-  call assert_fails('set vsts=8,,8')
-  call assert_fails('set vts=8,,8,')
-  call assert_fails('set vsts=8,,8,')
-  call assert_fails('set vts=,8')
-  call assert_fails('set vsts=,8')
+  call assert_fails('set vts=8,', 'E475: Invalid argument: 8,')
+  call assert_fails('set vsts=8,', 'E475: Invalid argument: 8,')
+  call assert_fails('set vts=8,,8', 'E474: Invalid argument: vts=8,,8')
+  call assert_fails('set vsts=8,,8', 'E474: Invalid argument: vsts=8,,8')
+  call assert_fails('set vts=8,,8,', 'E474: Invalid argument: vts=8,,8,')
+  call assert_fails('set vsts=8,,8,', 'E474: Invalid argument: vsts=8,,8,')
+  call assert_fails('set vts=,8', 'E474: Invalid argument: vts=,8')
+  call assert_fails('set vsts=,8', 'E474: Invalid argument: vsts=,8')
 endfunc
 
 func Test_vartabs_reset()

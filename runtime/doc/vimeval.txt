@@ -4,7 +4,7 @@
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
 
 
-Expression evaluation	*vimscript* *expression* *expr* *E15* *eval* *eval.txt*
+Expression evaluation			*expression* *expr* *E15* *eval* *eval.txt*
 
 Using expressions is introduced in chapter 41 of the user manual |usr_41.txt|.
 
@@ -14,11 +14,16 @@ Using expressions is introduced in chapter 41 of the user manual |usr_41.txt|.
 1. Variables						*variables*
 
 1.1 Variable types ~
-						*E712* *E896* *E897* *E899*
+						*E712* *E896* *E897* *E899* *E908* *E909*
+					*E928* *E964* *E966* *E1023* *E1098* *E1174* *E1175*
+					*E1203* *E1206* *E1210* *E1211* *E1212* *E1219* *E1220*
+					*E1222* *E1225* *E1226* *E1238* *E1250* *E1252* *E1256*
+					*E1265* *E1297* *E5010* *E5050* *E5060* *E5070* *E5071*
+					*E5299* *E5300* *E5401* *E5420* *E6000*
 There are seven types of variables:
 
-							*Number* *Integer*
-Number		A 32 or 64 bit signed number.  |expr-number|
+Number							*Number* *Integer*
+		A 32 or 64 bit signed number.  |expr-number|
 		The number of bits is available in |v:numbersize|.
 		Examples:  -123  0x10  0177  0o177  0b1011
 
@@ -43,7 +48,7 @@ Dictionary	An associative, unordered array: Each entry has a key and a
 			{"blue": "#0000ff", "red": "#ff0000"}
 			#{blue: "#0000ff", red: "#ff0000"}
 
-Blob		Binary Large Object. Stores any sequence of bytes.  See |Blob|
+Blob		Binary Large Object.  Stores any sequence of bytes.  See |Blob|
 		for details.
 		Example: 0zFF00ED015DAF
 		0z is an empty Blob.
@@ -52,29 +57,30 @@ The Number and String types are converted automatically, depending on how they
 are used.
 
 Conversion from a Number to a String is by making the ASCII representation of
-the Number.  Examples:
-	Number 123	-->	String "123" ~
-	Number 0	-->	String "0" ~
-	Number -1	-->	String "-1" ~
+the Number.  Examples: >
+	Number 123	-->	String "123"
+	Number 0	-->	String "0"
+	Number -1	-->	String "-1"
+<
 							*octal*
 Conversion from a String to a Number is done by converting the first digits to
 a number.  Hexadecimal "0xf9", Octal "017" or "0o17", and Binary "0b10"
 numbers are recognized.  If the String doesn't start with digits, the result
-is zero. Examples:
-	String "456"	-->	Number 456 ~
-	String "6bar"	-->	Number 6 ~
-	String "foo"	-->	Number 0 ~
-	String "0xf1"	-->	Number 241 ~
-	String "0100"	-->	Number 64 ~
-	String "0o100"	-->	Number 64 ~
-	String "0b101"	-->	Number 5 ~
-	String "-8"	-->	Number -8 ~
-	String "+8"	-->	Number 0 ~
-
+is zero. Examples: >
+	String "456"	-->	Number 456
+	String "6bar"	-->	Number 6
+	String "foo"	-->	Number 0
+	String "0xf1"	-->	Number 241
+	String "0100"	-->	Number 64
+	String "0o100"	-->	Number 64
+	String "0b101"	-->	Number 5
+	String "-8"	-->	Number -8
+	String "+8"	-->	Number 0
+<
 To force conversion from String to Number, add zero to it: >
 	:echo "0100" + 0
-<	64 ~
-
+	64
+<
 To avoid a leading zero to cause octal conversion, or for using a different
 base, use |str2nr()|.
 
@@ -738,7 +744,7 @@ Blob modification ~
 To change a specific byte of a blob use |:let| this way: >
 	:let blob[4] = 0x44
 
-When the index is just one beyond the end of the Blob, it is appended. Any
+When the index is just one beyond the end of the Blob, it is appended.  Any
 higher index is an error.
 
 To change a sequence of bytes the [:] notation can be used: >
@@ -954,12 +960,11 @@ expr4 && expr4 ..	logical AND		*expr-&&*
 The "||" and "&&" operators take one argument on each side.  The arguments
 are (converted to) Numbers.  The result is:
 
-    input			 output ~
-n1	n2		n1 || n2	n1 && n2 ~
-|FALSE|	|FALSE|		|FALSE|		|FALSE|
-|FALSE|	|TRUE|		|TRUE|		|FALSE|
-|TRUE|	|FALSE|		|TRUE|		|FALSE|
-|TRUE|	|TRUE|		|TRUE|		|TRUE|
+n1	n2	n1 || n2	n1 && n2 ~
+|FALSE|	|FALSE|	|FALSE|		|FALSE|
+|FALSE|	|TRUE|	|TRUE|		|FALSE|
+|TRUE|	|FALSE|	|TRUE|		|FALSE|
+|TRUE|	|TRUE|	|TRUE|		|TRUE|
 
 The operators can be concatenated, for example: >
 
@@ -1000,7 +1005,8 @@ if it evaluates to true.
 			*expr-<?*  *expr-<=?* *expr-=~?* *expr-!~?*
 			*expr-is* *expr-isnot* *expr-is#* *expr-isnot#*
 			*expr-is?* *expr-isnot?*
-		use 'ignorecase'    match case	   ignore case ~
+
+ 			'ignorecase'	match case	ignore case ~
 equal			==		==#		==?
 not equal		!=		!=#		!=?
 greater than		>		>#		>?
@@ -1238,7 +1244,7 @@ Examples: >
 							*slice*
 If expr8 is a |List| this results in a new |List| with the items indicated by
 the indexes expr1a and expr1b.  This works like with a String, as explained
-just above. Also see |sublist| below.  Examples: >
+just above.  Also see |sublist| below.  Examples: >
 	:let l = mylist[:3]		" first four items
 	:let l = mylist[4:4]		" List with one item
 	:let l = mylist[:]		" shallow copy of a List
@@ -1319,39 +1325,60 @@ When using the lambda form there must be no white space between the } and the
 (.
 
 
-							*expr9*
 ------------------------------------------------------------------------------
-number
+number							*expr9*
 
 number			number constant			*expr-number*
 
-			*0x* *hex-number* *0o* *octal-number* *binary-number*
-Decimal, Hexadecimal (starting with 0x or 0X), Binary (starting with 0b or 0B)
-and Octal (starting with 0, 0o or 0O).
+			*0x* *hex-number* *0o* *octal-number* *0b* *binary-number*
+Integer numbers can be written in multiple forms:
+
+	Notation	Base ~
+	{N}		decimal
+	0x{N} or 0X{N}	hexadecimal
+	0o{N} or 0O{N}	octal
+	0{N}		octal
+	0b{N} or 0B{N}	binary
+
+{N} is a sequence of decimal digits (0-9), hexadecimal digits (0-9, a-f and
+A-F), octal digits (0-7) or binary digits (0 or 1).
+
+A leading "+" or "-" is not part of an integer literal.  E.g., -123 is an
+expression, the unary operator |expr-unary--| applied to the number 123.
+
+Examples:
+	0xDEAD
+	57005
+	0b1101111010101101
+	0o157255
 
 						*floating-point-format*
 Floating point numbers can be written in two forms:
 
-	[-+]{N}.{M}
-	[-+]{N}.{M}[eE][-+]{exp}
+	{N}.{M}
+	{N}.{M}[eE][-+]{exp}
 
-{N} and {M} are numbers.  Both {N} and {M} must be present and can only
-contain digits.
-[-+] means there is an optional plus or minus sign.
+{N} and {M} are sequences of decimal digits  Both {N} and {M} must be present.
 {exp} is the exponent, power of 10.
 Only a decimal point is accepted, not a comma.  No matter what the current
 locale is.
 
+A leading "+" or "-" is not part of a floating point literal.  E.g., -1.0e-3
+is an expression, the unary operator |expr-unary--| applied to the float 1.0e-3.
+The "-" in the exponent is part of the literal.
+
 Examples:
 	123.456
-	+0.0001
+	0.0001
 	55.0
-	-0.123
+	0.123
 	1.234e03
 	1.0E-6
-	-3.1416e+88
+	3.1416e+88
 
 These are INVALID:
+
+	Example		Problem ~
 	3.		empty {M}
 	1e40		missing .{M}
 
@@ -1392,6 +1419,8 @@ string					*string* *String* *expr-string* *E114*
 Note that double quotes are used.
 
 A string constant accepts these special characters:
+
+Escape	Meaning ~
 \...	three-digit octal number (e.g., "\316")
 \..	two-digit octal number (must be followed by non-digit)
 \.	one-digit octal number (must be followed by non-digit)
@@ -1416,8 +1445,8 @@ A string constant accepts these special characters:
 	Don't use <Char-xxxx> to get a UTF-8 character, use \uxxxx as
 	mentioned above.
 \<*xxx>	Like \<xxx> but prepends a modifier instead of including it in the
-	character.  E.g. "\<C-w>" is one character 0x17 while "\<*C-w>" is four
-	bytes: 3 for the CTRL modifier and then character "W".
+	character.  E.g. "\<C-w>" is one character 0x17 while "\<*C-w>" is
+	four bytes: 3 for the CTRL modifier and then character "W".
 
 Note that "\xff" is stored as the byte 255, which may be invalid in some
 encodings.  Use "\u00ff" to store character 255 correctly as UTF-8.
@@ -1436,7 +1465,7 @@ The sequence must be an even number of hex characters.  Example: >
 ------------------------------------------------------------------------------
 literal-string						*literal-string* *E115*
 
-'string'		string constant			*expr-'*
+`'string'`		string constant			*expr-'*
 
 Note that single quotes are used.
 
@@ -1460,22 +1489,24 @@ allowing the inclusion of Vim script expressions (see |expr1|).  Any
 expression returning a value can be enclosed between curly braces.  The value
 is converted to a string.  All the text and results of the expressions
 are concatenated to make a new string.
-								*E1278*
+							*E1278* *E1279*
 To include an opening brace '{' or closing brace '}' in the string content
 double it.  For double quoted strings using a backslash also works.  A single
 closing brace '}' will result in an error.
 
 Examples: >
 	let your_name = input("What's your name? ")
-<	What's your name?  Peter ~
+	What's your name?  Peter
+<
 >
 	echo
 	echo $"Hello, {your_name}!"
-<	Hello, Peter! ~
+	Hello, Peter!
+<
 >
 	echo $"The square root of {{9}} is {sqrt(9)}"
-<	The square root of {9} is 3.0 ~
-
+	The square root of {9} is 3.0
+<
 						*string-offset-encoding*
 A string consists of multiple characters.  UTF-8 uses one byte for ASCII
 characters, two bytes for other latin characters and more bytes for other
@@ -1506,6 +1537,7 @@ a string respectively.
 ------------------------------------------------------------------------------
 option						*expr-option* *E112* *E113*
 
+Expression		Value ~
 &option			option value, local value if possible
 &g:option		global option value
 &l:option		local option value
@@ -1534,7 +1566,6 @@ evaluates to.  Use |eval()| to evaluate it.
 
 
 nesting							*expr-nesting* *E110*
--------
 (expr1)			nested expression
 
 
@@ -1798,7 +1829,7 @@ Note that this means that filetype plugins don't get a different set of script
 variables for each buffer.  Use local buffer variables instead |b:var|.
 
 
-PREDEFINED VIM VARIABLES			*vim-variable* *v:var* *v:*
+PREDEFINED VIM VARIABLES			*vim-variable*
 								*E963*
 
 The alphabetic list of all builtin variables and details are in a separate
@@ -1813,7 +1844,7 @@ functions.  Scripts can also define |user-function|s.
 See |function-list| to browse functions by topic.
 
 The alphabetic list of all builtin functions and details are in a separate
-help file: |builtin-functions|.
+help file: |vimscript-functions|.
 
 ==============================================================================
 5. Defining functions					*user-function*
@@ -1921,6 +1952,7 @@ This does NOT work: >
 			Set environment variable {env-name} to the result of
 			the expression {expr1}.  The type is always String.
 :let ${env-name} .= {expr1}
+:let ${env-name} ..= {expr1}
 			Append {expr1} to the environment variable {env-name}.
 			If the environment variable didn't exist yet this
 			works like "=".
@@ -1940,6 +1972,7 @@ This does NOT work: >
 			that would match everywhere.
 
 :let @{reg-name} .= {expr1}
+:let @{reg-name} ..= {expr1}
 			Append {expr1} to register {reg-name}.  If the
 			register was empty it's like setting it to {expr1}.
 
@@ -1954,6 +1987,7 @@ This does NOT work: >
 				:let &path = &path .. ',/usr/local/include'
 
 :let &{option-name} .= {expr1}
+:let &{option-name} ..= {expr1}
 			For a string option: Append {expr1} to the value.
 			Does not insert a comma like |:set+=|.
 
@@ -1963,16 +1997,18 @@ This does NOT work: >
 			{expr1}.
 
 :let &l:{option-name} = {expr1}
-:let &l:{option-name} .= {expr1}
 :let &l:{option-name} += {expr1}
 :let &l:{option-name} -= {expr1}
+:let &l:{option-name} .= {expr1}
+:let &l:{option-name} ..= {expr1}
 			Like above, but only set the local value of an option
 			(if there is one).  Works like |:setlocal|.
 
 :let &g:{option-name} = {expr1}
-:let &g:{option-name} .= {expr1}
 :let &g:{option-name} += {expr1}
 :let &g:{option-name} -= {expr1}
+:let &g:{option-name} .= {expr1}
+:let &g:{option-name} ..= {expr1}
 			Like above, but only set the global value of an option
 			(if there is one).  Works like |:setglobal|.
 
@@ -1995,11 +2031,15 @@ This does NOT work: >
 				:echo x
 <			The result is [0, 2].
 
-:let [{name1}, {name2}, ...] .= {expr1}
 :let [{name1}, {name2}, ...] += {expr1}
 :let [{name1}, {name2}, ...] -= {expr1}
-			Like above, but append/add/subtract the value for each
-			|List| item.
+`:let [{name1}, {name2}, ...] *= {expr1}`
+:let [{name1}, {name2}, ...] /= {expr1}
+:let [{name1}, {name2}, ...] %= {expr1}
+:let [{name1}, {name2}, ...] .= {expr1}
+:let [{name1}, {name2}, ...] ..= {expr1}
+			Like above, but add, subtract, multiply, divide,
+			modulo, or append the value for each |List| item.
 
 :let [{name}, ..., ; {lastname}] = {expr1}				*E452*
 			Like |:let-unpack| above, but the |List| may have more
@@ -2009,18 +2049,19 @@ This does NOT work: >
 			Example: >
 				:let [a, b; rest] = ["aval", "bval", 3, 4]
 <
-:let [{name}, ..., ; {lastname}] .= {expr1}
 :let [{name}, ..., ; {lastname}] += {expr1}
 :let [{name}, ..., ; {lastname}] -= {expr1}
-			Like above, but append/add/subtract the value for each
+:let [{name}, ..., ; {lastname}] .= {expr1}
+:let [{name}, ..., ; {lastname}] ..= {expr1}
+			Like above, but add/subtract/append the value for each
 			|List| item.
 
-						*:let=<<* *:let-heredoc*
-					*E990* *E991* *E172* *E221* *E1145*
-:let {var-name} =<< [trim] [eval] {endmarker}
+							*E990* *E991* *E172* *E221* *E1145*
+:let {var-name} =<< [trim] [eval] {endmarker}  *:let=<<* *:let-heredoc*
 text...
 text...
 {endmarker}
+
 			Set internal variable {var-name} to a |List|
 			containing the lines of text bounded by the string
 			{endmarker}.
@@ -2039,7 +2080,8 @@ text...
 				END
 <			There can be multiple Vim expressions in a single line
 			but an expression cannot span multiple lines.  If any
-			expression evaluation fails, then the assignment fails.
+			expression evaluation fails, then the assignment
+			fails.
 
 			{endmarker} must not contain white space.
 			{endmarker} cannot start with a lower case character.
@@ -2057,8 +2099,9 @@ text...
 				   endif
 				END
 <			Results in: `["if ok", "  echo 'done'", "endif"]`
-			The marker must line up with "let" and the indentation
-			of the first line is removed from all the text lines.
+			The end marker must line up with "let" and the
+			indentation of the first line is removed from all the
+			text lines.
 			Specifically: all the leading indentation exactly
 			matching the leading indentation of the first
 			non-empty text line is stripped from the input lines.
@@ -2098,10 +2141,12 @@ text...
 				   let n = {MyFunc(3, 4)}
 				CODE
 <
-								*E121*
-:let {var-name}	..	List the value of variable {var-name}.  Multiple
+:let {var-name}	...					*E121*
+			List the value of variable {var-name}.  Multiple
 			variable names may be given.  Special names recognized
 			here:				*E738*
+
+			  Prefix	Scope ~
 			  g:	global variables
 			  b:	local buffer variables
 			  w:	local window variables
@@ -2115,7 +2160,6 @@ text...
 			    <nothing>	String
 				#	Number
 				*	Funcref
-
 
 :unl[et][!] {name} ...				*:unlet* *:unl* *E108* *E795*
 			Remove the internal variable {name}.  Several variable
@@ -2143,14 +2187,13 @@ text...
 			If the system does not support deleting an environment
 			variable, it is made empty.
 
-						*:cons* *:const*
-:cons[t] {var-name} = {expr1}
+:cons[t] {var-name} = {expr1}				*:cons* *:const*
 :cons[t] [{name1}, {name2}, ...] = {expr1}
 :cons[t] [{name}, ..., ; {lastname}] = {expr1}
-:cons[t] {var-name} =<< [trim] [eval] {marker}
+:cons[t] {var-name} =<< [trim] [eval] {endmarker}
 text...
 text...
-{marker}
+{endmarker}
 			Similar to |:let|, but additionally lock the variable
 			after setting the value.  This is the same as locking
 			the variable with |:lockvar| just after |:let|, thus: >
@@ -2244,8 +2287,9 @@ text...
 
 			No error is given if {name} does not exist.
 
-:if {expr1}			*:if* *:end* *:endif* *:en* *E171* *E579* *E580*
-:en[dif]		Execute the commands until the next matching `:else`
+:if {expr1}						*:if* *E171* *E579* *E580*
+:en[dif]						*:end* *:endif* *:en*
+			Execute the commands until the next matching `:else`
 			or `:endif` if {expr1} evaluates to non-zero.
 			Although the short forms work, it is recommended to
 			always use `:endif` to avoid confusion and to make
@@ -2275,18 +2319,19 @@ text...
 			NOTE: The `:append` and `:insert` commands don't work
 			properly in between `:if` and `:endif`.
 
-						*:else* *:el* *E581* *E583*
-:el[se]			Execute the commands until the next matching `:else`
+:el[se]						*:else* *:el* *E581* *E583*
+			Execute the commands until the next matching `:else`
 			or `:endif` if they previously were not being
 			executed.
 
-					*:elseif* *:elsei* *E582* *E584*
-:elsei[f] {expr1}	Short for `:else` `:if`, with the addition that there
+:elsei[f] {expr1}			*:elseif* *:elsei* *E582* *E584*
+			Short for `:else` `:if`, with the addition that there
 			is no extra `:endif`.
 
-:wh[ile] {expr1}			*:while* *:endwhile* *:wh* *:endw*
 						*E170* *E585* *E588* *E733*
-:endw[hile]		Repeat the commands between `:while` and `:endwhile`,
+:wh[ile] {expr1}					*:while* *:wh*
+:endw[hile]						*:endwhile*  *:endw*
+			Repeat the commands between `:while` and `:endwhile`,
 			as long as {expr1} evaluates to non-zero.
 			When an error is detected from a command inside the
 			loop, execution continues after the `endwhile`.
@@ -2343,8 +2388,8 @@ text...
 				   :echo getline(lnum)[col]
 				:endfor
 <
-						*:continue* *:con* *E586*
-:con[tinue]		When used inside a `:while` or `:for` loop, jumps back
+:con[tinue]					*:continue* *:con* *E586*
+			When used inside a `:while` or `:for` loop, jumps back
 			to the start of the loop.
 
 			If it is used after a `:try` inside the loop but
@@ -2354,8 +2399,8 @@ text...
 			all nested `:try`s inside the loop.  The outermost
 			`:endtry` then jumps back to the start of the loop.
 
-						*:break* *:brea* *E587*
-:brea[k]		When used inside a `:while` or `:for` loop, skips to
+:brea[k]					*:break* *:brea* *E587*
+			When used inside a `:while` or `:for` loop, skips to
 			the command after the matching `:endwhile` or
 			`:endfor`.
 			If it is used after a `:try` inside the loop but
@@ -2365,8 +2410,9 @@ text...
 			all nested `:try`s inside the loop.  The outermost
 			`:endtry` then jumps to the command after the loop.
 
-:try				*:try* *:endt* *:endtry* *E600* *E601* *E602*
-:endt[ry]		Change the error handling for the commands between
+:try							*:try* *E600* *E601* *E602*
+:endt[ry]						*:endt* *:endtry*
+			Change the error handling for the commands between
 			`:try` and `:endtry` including everything being
 			executed across `:source` commands, function calls,
 			or autocommand invocations.
@@ -2401,20 +2447,23 @@ text...
 		try | sleep 100 | catch /^Vim:Interrupt$/ | endtry
 		try | edit | catch /^Vim(edit):E\d\+/ | echo "error" | endtry
 <
-					*:cat* *:catch* *E603* *E604* *E605*
-:cat[ch] /{pattern}/	The following commands until the next `:catch`,
+:cat[ch] [/{pattern}/]		*:cat* *:catch* *E603* *E604* *E605* *E654*
+			The following commands until the next `:catch`,
 			`:finally`, or `:endtry` that belongs to the same
 			`:try` as the `:catch` are executed when an exception
 			matching {pattern} is being thrown and has not yet
 			been caught by a previous `:catch`.  Otherwise, these
 			commands are skipped.
-			When {pattern} is omitted all errors are caught.
-			Examples: >
+			Pattern can start with "Vim({cmd})" to indicate an
+			exception that occurred when executing the Ex command
+			{cmd}.  When {pattern} is omitted all errors are
+			caught. Examples: >
 		:catch /^Vim:Interrupt$/	 " catch interrupts (CTRL-C)
-		:catch /^Vim\%((\a\+)\)\=:E/	 " catch all Vim errors
-		:catch /^Vim\%((\a\+)\)\=:/	 " catch errors and interrupts
+		:catch /^Vim\%((\S\+)\)\=:E/	 " catch all Vim errors
+		:catch /^Vim\%((\S\+)\)\=:/	 " catch errors and interrupts
 		:catch /^Vim(write):/		 " catch all errors in :write
-		:catch /^Vim\%((\a\+)\)\=:E123:/ " catch error E123
+		:catch /^Vim(!):/		 " catch all errors in :!
+		:catch /^Vim\%((\S\+)\)\=:E123:/ " catch error E123
 		:catch /my-exception/		 " catch user exception
 		:catch /.*/			 " catch everything
 		:catch				 " same as /.*/
@@ -2429,16 +2478,16 @@ text...
 			an error message because it may vary in different
 			locales.
 
-					*:fina* *:finally* *E606* *E607*
-:fina[lly]		The following commands until the matching `:endtry`
+:fina[lly]				*:fina* *:finally* *E606* *E607*
+			The following commands until the matching `:endtry`
 			are executed whenever the part between the matching
 			`:try` and the `:finally` is left:  either by falling
 			through to the `:finally` or by a `:continue`,
 			`:break`, `:finish`, or `:return`, or by an error or
 			interrupt or exception (see `:throw`).
 
-							*:th* *:throw* *E608*
-:th[row] {expr1}	The {expr1} is evaluated and thrown as an exception.
+:th[row] {expr1}					*:th* *:throw* *E608*
+			The {expr1} is evaluated and thrown as an exception.
 			If the `:throw` is used after a `:try` but before the
 			first corresponding `:catch`, commands are skipped
 			until the first `:catch` matching {expr1} is reached.
@@ -2459,8 +2508,8 @@ text...
 			for when an error causes the parsing to skip the whole
 			line and not see the "|" that separates the commands.
 
-							*:ec* *:echo*
-:ec[ho] {expr1} ..	Echoes each {expr1}, with a space in between.  The
+:ec[ho] {expr1} ...					*:ec* *:echo*
+			Echoes each {expr1}, with a space in between.  The
 			first {expr1} starts on a new line.
 			Also see |:comment|.
 			Use "\n" to start a new line.  Use "\r" to move the
@@ -2492,8 +2541,8 @@ text...
 			echo "[[[...@1]]]" because l first occurs at second
 			level.
 
-							*:echon*
-:echon {expr1} ..	Echoes each {expr1}, without anything added.  Also see
+:echon {expr1} ...					*:echon*
+			Echoes each {expr1}, without anything added.  Also see
 			|:comment|.
 			Uses the highlighting set by the `:echohl` command.
 			Cannot be followed by a comment.
@@ -2515,16 +2564,16 @@ text...
 		:echo expand("%")	--> filename
 <			This calls the expand() function to expand the '%'.
 
-							*:echoh* *:echohl*
-:echoh[l] {name}	Use the highlight group {name} for the following
+:echoh[l] {name}					*:echoh* *:echohl*
+			Use the highlight group {name} for the following
 			`:echo`, `:echon` and `:echomsg` commands.  Also used
 			for the `input()` prompt.  Example: >
 		:echohl WarningMsg | echo "Don't panic!" | echohl None
 <			Don't forget to set the group back to "None",
 			otherwise all following echo's will be highlighted.
 
-							*:echom* *:echomsg*
-:echom[sg] {expr1} ..	Echo the expression(s) as a true message, saving the
+:echom[sg] {expr1} ...					*:echom* *:echomsg*
+			Echo the expression(s) as a true message, saving the
 			message in the |message-history|.
 			Spaces are placed between the arguments as with the
 			`:echo` command.  But unprintable characters are
@@ -2539,8 +2588,9 @@ text...
 		:echomsg "It's a Zizzer Zazzer Zuzz, as you can plainly see."
 <			See |:echo-redraw| to avoid the message disappearing
 			when the screen is redrawn.
-							*:echoe* *:echoerr*
-:echoe[rr] {expr1} ..	Echo the expression(s) as an error message, saving the
+
+:echoe[rr] {expr1} ...					*:echoe* *:echoerr*
+			Echo the expression(s) as an error message, saving the
 			message in the |message-history|.  When used in a
 			script or function the line number will be added.
 			Spaces are placed between the arguments as with the
@@ -2571,8 +2621,8 @@ text...
 			command, since "|" is seen as part of the expression.
 
 
-							*:exe* *:execute*
-:exe[cute] {expr1} ..	Executes the string that results from the evaluation
+:exe[cute] {expr1} ...					*:exe* *:execute*
+			Executes the string that results from the evaluation
 			of {expr1} as an Ex command.
 			Multiple arguments are concatenated, with a space in
 			between.  To avoid the extra space use the ".."
@@ -2971,10 +3021,9 @@ the original error exception value, you can use the |:echoerr| command: >
 	:  echo v:exception
 	:endtry
 
-This code displays
-
-	Vim(echoerr):Vim:E492: Not an editor command:	asdf ~
-
+This code displays >
+	Vim(echoerr):Vim:E492: Not an editor command:	asdf
+<
 
 CLEANUP CODE						*try-finally*
 
@@ -3718,7 +3767,7 @@ the output of `scriptnames` this code can be used: >
     unlet scriptnames_output
 
 ==============================================================================
-The sandbox					*eval-sandbox* *sandbox*
+The sandbox				*eval-sandbox* *sandbox* *E523*
 
 The 'foldexpr', 'formatexpr', 'includeexpr', 'indentexpr', 'statusline' and
 'foldtext' options may be evaluated in a sandbox.  This means that you are
@@ -3739,8 +3788,8 @@ These items are not allowed in the sandbox:
 	- executing Python, Perl, etc. commands
 This is not guaranteed 100% secure, but it should block most attacks.
 
-							*:san* *:sandbox*
-:san[dbox] {cmd}	Execute {cmd} in the sandbox.  Useful to evaluate an
+:san[dbox] {cmd}					*:san* *:sandbox*
+			Execute {cmd} in the sandbox.  Useful to evaluate an
 			option that may have been set from a modeline, e.g.
 			'foldexpr'.
 
@@ -3774,7 +3823,7 @@ This is not allowed when the textlock is active:
 	- etc.
 
 ==============================================================================
-Vim script library					*vim-script-library*
+Vim script library					*vimscript-library*
 
 Vim comes bundled with a Vim script library, that can be used by runtime,
 script authors.  Currently, it only includes very few functions, but it may
@@ -3796,7 +3845,6 @@ It returns |TRUE| or |FALSE| to indicate whether the plugin should run the given
 executable.  It takes the following arguments:
 
 	argument	type ~
-
 	filetype	string
 	executable	string
 

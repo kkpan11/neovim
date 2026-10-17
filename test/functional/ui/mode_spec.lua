@@ -2,6 +2,7 @@ local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
+local describe, it, before_each = t.describe, t.it, t.before_each
 local clear, feed, insert = n.clear, n.feed, n.insert
 local command = n.command
 local retry = t.retry
@@ -43,6 +44,11 @@ describe('ui mode_change event', function()
     ]],
       mode = 'normal',
     }
+
+    n.feed(':append<cr>')
+    screen:expect({ mode = 'cmdline_normal' })
+    n.feed('<esc>')
+    screen:expect({ mode = 'normal' })
   end)
 
   -- oldtest: Test_mouse_shape_after_failed_change()
@@ -112,7 +118,7 @@ describe('ui mode_change event', function()
       grid = [[
       {17:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}|
       {17:aaaaaaaaaaaaaaaaaaaa}                                        |
-      ^b{17:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}|
+      {17:^bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}|
       {17:bbbbbbbbbbbbbbbbbbbb}                                        |
       {1:~                                                           }|
       {5:-- VISUAL LINE --}                                           |
@@ -158,6 +164,11 @@ describe('ui mode_change event', function()
     local matchtime = 0
     command('set showmatch')
     retry(nil, nil, function()
+      if matchtime > 0 then
+        feed([[<c-\><c-n>]])
+        command("call setline(1, 'word')")
+      end
+
       matchtime = matchtime + 1
       local screen_timeout = 1000 * matchtime -- fail faster for retry.
 
@@ -275,7 +286,7 @@ describe('ui mode_change event', function()
     feed('v')
     screen:expect {
       grid = [[
-      tex^t                     |
+      tex{17:^t}                     |
       {1:~                        }|*2
       {5:-- VISUAL --}             |
     ]],

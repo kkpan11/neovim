@@ -294,6 +294,7 @@ func Test_getcellwidths()
 endfunc
 
 func Test_setcellwidths_dump()
+  CheckScreendump
   CheckRunVimInTerminal
 
   let lines =<< trim END
@@ -311,6 +312,7 @@ endfunc
 
 " Test setcellwidths() on characters that are not targets of 'ambiwidth'.
 func Test_setcellwidths_with_non_ambiwidth_character_dump()
+  CheckScreendump
   CheckRunVimInTerminal
 
   let lines =<< trim END
@@ -333,6 +335,7 @@ endfunc
 " For some reason this test causes Test_customlist_completion() to fail on CI,
 " so run it as the last test.
 func Test_zz_ambiwidth_hl_dump()
+  CheckScreendump
   CheckRunVimInTerminal
 
   let lines =<< trim END
@@ -368,6 +371,33 @@ func Test_print_overlong()
   call setline(1, 'axxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
   s/x/\=nr2char(1629)/g
   print
+  bwipe!
+endfunc
+
+" A screen cell can hold a character of up to six bytes plus 'maxcombine'
+" composing characters of up to four bytes each.  This used to be more than
+" MB_MAXBYTES, overflowing the buffers that are sized with it.
+func Test_composing_chars_four_bytes()
+  new
+  let save_mco = &maxcombine
+  set maxcombine=6
+
+  " Six composing characters in the supplementary planes, four bytes each.
+  let cc = ''
+  for c in [0x101fd, 0x102e0, 0x10376, 0x10377, 0x10378, 0x10379]
+    let cc ..= nr2char(c)
+  endfor
+
+  " A four byte and a six byte base character.
+  for base in [0x1F600, 0x4000000]
+    let text = nr2char(base) .. cc
+    call setline(1, text)
+    redraw
+    call assert_equal(text, screenstring(1, 1))
+    call assert_equal(7, len(screenchars(1, 1)))
+  endfor
+
+  let &maxcombine = save_mco
   bwipe!
 endfunc
 

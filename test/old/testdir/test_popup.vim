@@ -216,8 +216,9 @@ func Test_popup_complete()
   call feedkeys("aM\<f5>\<enter>\<esc>", 'tx')
   call assert_equal(["March", "M", "March"], getline(1,4))
   %d
-endfunc
 
+  set completeopt&
+endfunc
 
 func Test_popup_completion_insertmode()
   new
@@ -724,6 +725,9 @@ func Test_popup_and_preview_autocommand()
     au!
     au BufAdd * nested tab sball
   augroup END
+  " Let pythoncomplete follow the buffer's 'import os' (off by default
+  " since v9.2.0561) so 'os.' can be completed.
+  let g:pythoncomplete_allow_import = 1
   set omnifunc=pythoncomplete#Complete
   call setline(1, 'import os')
   " make the line long
@@ -746,6 +750,7 @@ func Test_popup_and_preview_autocommand()
   augroup END
   augroup! MyBufAdd
   bw!
+  unlet g:pythoncomplete_allow_import
 endfunc
 
 func s:run_popup_and_previewwindow_dump(lines, dumpfile)
@@ -1004,7 +1009,6 @@ func Test_popup_complete_backwards_ctrl_p()
 endfunc
 
 func Test_complete_o_tab()
-  CheckFunction test_override
   let s:o_char_pressed = 0
 
   fun! s:act_on_text_changed()
@@ -1022,12 +1026,12 @@ func Test_complete_o_tab()
   call setline(1,  ['hoard', 'hoax', 'hoarse', ''])
   let l:expected = ['hoard', 'hoax', 'hoarse', 'hoax', 'hoax']
   call cursor(4,1)
-  call test_override("char_avail", 1)
+  call Ntest_override("char_avail", 1)
   call feedkeys("Ahoa\<tab>\<tab>\<c-y>\<esc>", 'tx')
   call feedkeys("oho\<tab>\<tab>\<c-y>\<esc>", 'tx')
   call assert_equal(l:expected, getline(1,'$'))
 
-  call test_override("char_avail", 0)
+  call Ntest_override("char_avail", 0)
   bwipe!
   set completeopt&
   delfunc s:act_on_text_changed
@@ -1082,6 +1086,7 @@ func Test_popup_complete_info_01()
   setlocal thesaurus=Xdummy.txt
   setlocal omnifunc=syntaxcomplete#Complete
   setlocal completefunc=syntaxcomplete#Complete
+  setlocal completeopt+=noinsert
   setlocal spell
   for [keys, mode_name] in [
         \ ["", ''],
@@ -1145,12 +1150,13 @@ func Test_popup_complete_info_02()
     \   'mode': 'function',
     \   'pum_visible': 1,
     \   'items': [
-    \     {'word': 'Jan', 'menu': 'January', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
-    \     {'word': 'Feb', 'menu': 'February', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
-    \     {'word': 'Mar', 'menu': 'March', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
-    \     {'word': 'Apr', 'menu': 'April', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
-    \     {'word': 'May', 'menu': 'May', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''}
+    \     {'word': 'Jan', 'menu': 'January', 'kind_hlgroup': '', 'abbr_hlgroup': '', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
+    \     {'word': 'Feb', 'menu': 'February', 'kind_hlgroup': '', 'abbr_hlgroup': '', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
+    \     {'word': 'Mar', 'menu': 'March', 'kind_hlgroup': '', 'abbr_hlgroup': '', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
+    \     {'word': 'Apr', 'menu': 'April', 'kind_hlgroup': '', 'abbr_hlgroup': '', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''},
+    \     {'word': 'May', 'menu': 'May', 'kind_hlgroup': '', 'abbr_hlgroup': '', 'user_data': '', 'info': '', 'kind': '', 'abbr': ''}
     \   ],
+    \   'preinserted_text': '',
     \   'selected': 0,
     \ }
 
@@ -1158,7 +1164,7 @@ func Test_popup_complete_info_02()
   call feedkeys("i\<C-X>\<C-U>\<F5>", 'tx')
   call assert_equal(d, g:compl_info)
 
-  let g:compl_what = ['mode', 'pum_visible', 'selected']
+  let g:compl_what = ['mode', 'pum_visible', 'preinserted_text', 'selected']
   call remove(d, 'items')
   call feedkeys("i\<C-X>\<C-U>\<F5>", 'tx')
   call assert_equal(d, g:compl_info)
@@ -1166,6 +1172,7 @@ func Test_popup_complete_info_02()
   let g:compl_what = ['mode']
   call remove(d, 'selected')
   call remove(d, 'pum_visible')
+  call remove(d, 'preinserted_text')
   call feedkeys("i\<C-X>\<C-U>\<F5>", 'tx')
   call assert_equal(d, g:compl_info)
   bwipe!
@@ -1179,6 +1186,7 @@ func Test_popup_complete_info_no_pum()
         \   'mode': '',
         \   'pum_visible': 0,
         \   'items': [],
+        \   'preinserted_text': '',
         \   'selected': -1,
         \  }
   call assert_equal( d, complete_info() )
@@ -1263,6 +1271,24 @@ func Test_pum_getpos()
 
   call assert_false( pumvisible() )
   call assert_equal( {}, pum_getpos() )
+  bw!
+  unlet g:pum_pos
+endfunc
+
+" The popup menu is also used on a terminal without colors (issue #20800)
+func Test_pum_without_colors()
+  CheckNotGui
+
+  new
+  let save_t_Co = &t_Co
+  set t_Co=0
+  inoremap <buffer><F5> <C-R>=GetPumPosition()<CR>
+  call setline(1, ['hello', 'help', ''])
+  call cursor(3, 1)
+  call feedkeys("ih\<C-N>\<F5>\<Esc>", 'tx')
+  call assert_equal(2, g:pum_pos.size)
+
+  let &t_Co = save_t_Co
   bw!
   unlet g:pum_pos
 endfunc
@@ -1520,8 +1546,7 @@ endfunc
 func Test_pum_completefuzzycollect()
   CheckScreendump
   let lines =<< trim END
-    set completefuzzycollect=keyword,files
-    set completeopt=menu,menuone
+    set completeopt=menu,menuone,fuzzy
   END
   call writefile(lines, 'Xscript', 'D')
   let  buf = RunVimInTerminal('-S Xscript', {})
@@ -2221,5 +2246,84 @@ func Test_pum_clear_when_switch_tab_or_win()
   call StopVimInTerminal(buf)
 endfunc
 
+func Test_pum_position_when_wrap()
+  CheckScreendump
+  let lines =<< trim END
+    func Omni_test(findstart, base)
+      if a:findstart
+        return col(".")
+      endif
+      return ['foo', 'bar', 'foobar']
+    endfunc
+    set omnifunc=Omni_test
+    set wrap
+    set cot+=noinsert
+  END
+  call writefile(lines, 'Xtest', 'D')
+  let buf = RunVimInTerminal('-S Xtest', #{rows: 15, cols: 25})
+
+  let long_text = repeat('abcde ', 20)
+  call term_sendkeys(buf, "i" .. long_text)
+  call TermWait(buf, 50)
+  call term_sendkeys(buf, "\<ESC>")
+  call TermWait(buf, 50)
+
+  call term_sendkeys(buf, "5|")
+  call TermWait(buf, 50)
+  call term_sendkeys(buf, "a\<C-X>\<C-O>")
+  call TermWait(buf, 100)
+  call VerifyScreenDump(buf, 'Test_pum_wrap_line1', {})
+  call term_sendkeys(buf, "\<ESC>")
+  call TermWait(buf, 50)
+
+  call term_sendkeys(buf, "30|")
+  call TermWait(buf, 50)
+  call term_sendkeys(buf, "a\<C-X>\<C-O>")
+  call TermWait(buf, 100)
+  call VerifyScreenDump(buf, 'Test_pum_wrap_line2', {})
+  call term_sendkeys(buf, "\<ESC>")
+  call TermWait(buf, 50)
+
+  call term_sendkeys(buf, "55|")
+  call TermWait(buf, 50)
+  call term_sendkeys(buf, "a\<C-X>\<C-O>")
+  call TermWait(buf, 100)
+  call VerifyScreenDump(buf, 'Test_pum_wrap_line3', {})
+  call term_sendkeys(buf, "\<C-E>\<ESC>")
+  call TermWait(buf, 50)
+
+  call term_sendkeys(buf, "85|")
+  call TermWait(buf, 50)
+  call term_sendkeys(buf, "a\<C-X>\<C-O>")
+  call TermWait(buf, 100)
+  call VerifyScreenDump(buf, 'Test_pum_wrap_line4', {})
+  call term_sendkeys(buf, "\<C-E>\<ESC>")
+  call TermWait(buf, 100)
+
+  call term_sendkeys(buf, "108|")
+  call TermWait(buf, 50)
+  call term_sendkeys(buf, "a\<C-X>\<C-O>")
+  call TermWait(buf, 100)
+  call VerifyScreenDump(buf, 'Test_pum_wrap_line5', {})
+  call term_sendkeys(buf, "\<C-E>\<ESC>")
+  call TermWait(buf, 100)
+
+  call StopVimInTerminal(buf)
+endfunc
+
+" Test that Vim does not crash when completion inside cmdwin opens a 'info'
+" preview window.
+func Test_popup_complete_cmdwin_preview()
+  throw "Skipped: Nvim supports cmdwin freedom #40312"
+  func! CompleteWithPreview(findstart, base)
+    if a:findstart
+      return getline('.')->strpart(0, col('.') - 1)
+    endif
+    return [#{word: 'echo', info: 'bar'}, #{word: 'echomsg', info: 'baz'}]
+  endfunc
+  set omnifunc=CompleteWithPreview
+  call feedkeys("q:if\<C-X>\<C-O>\<C-N>\<ESC>\<CR>", 'tx!')
+  set omnifunc&
+endfunc
 
 " vim: shiftwidth=2 sts=2 expandtab

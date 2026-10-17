@@ -2,6 +2,7 @@ local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
+local describe, it, before_each = t.describe, t.it, t.before_each
 local eq = t.eq
 local feed = n.feed
 local clear = n.clear
@@ -157,7 +158,7 @@ end)
 
 local function set_color_cb(funcname, callback_return, id)
   api.nvim_set_var('id', id or '')
-  if id and id ~= '' and fn.exists('*' .. funcname .. 'N') then
+  if id and id ~= '' and fn.exists('*' .. funcname .. 'N') == 1 then
     command(('let g:Nvim_color_input%s = {cmdline -> %sN(%s, cmdline)}'):format(id, funcname, id))
     if callback_return then
       api.nvim_set_var('callback_return' .. id, callback_return)

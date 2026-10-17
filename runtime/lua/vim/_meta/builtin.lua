@@ -1,4 +1,5 @@
 ---@meta
+-- This file is NOT generated, edit it directly.
 -- luacheck: no unused args
 
 error('Cannot require a meta file')
@@ -94,11 +95,12 @@ function vim.empty_dict() end
 --- @param ...? any
 function vim.rpcnotify(channel, method, ...) end
 
---- Sends a request to {channel} to invoke {method} via |RPC| and blocks until
---- a response is received.
+--- Invokes |RPC| `method` on `channel` and blocks until a response is received.
 ---
---- Note: NIL values as part of the return value is represented as |vim.NIL|
---- special value
+--- Note: Msgpack NIL values in the response are represented as |vim.NIL|.
+---
+--- Example: see [nvim_exec_lua()]
+---
 --- @param channel integer
 --- @param method string
 --- @param ...? any
@@ -177,51 +179,41 @@ function vim.iconv(str, from, to, opts) end
 --- Schedules {fn} to be invoked soon by the main event-loop. Useful
 --- to avoid |textlock| or other temporary restrictions.
 --- @param fn fun()
+--- @return nil result
+--- @return string? err Error message if scheduling failed, `nil` otherwise.
 function vim.schedule(fn) end
 
---- Wait for {time} in milliseconds until {callback} returns `true`.
----
---- Executes {callback} immediately and at approximately {interval}
---- milliseconds (default 200). Nvim still processes other events during
---- this time.
----
---- Cannot be called while in an |api-fast| event.
----
---- Examples:
----
---- ```lua
---- ---
---- -- Wait for 100 ms, allowing other events to process
---- vim.wait(100, function() end)
----
---- ---
---- -- Wait for 100 ms or until global variable set.
---- vim.wait(100, function() return vim.g.waiting_for_var end)
----
---- ---
---- -- Wait for 1 second or until global variable set, checking every ~500 ms
---- vim.wait(1000, function() return vim.g.waiting_for_var end, 500)
----
---- ---
---- -- Schedule a function to set a value in 100ms
---- vim.defer_fn(function() vim.g.timer_result = true end, 100)
----
---- -- Would wait ten seconds if results blocked. Actually only waits  100 ms
---- if vim.wait(10000, function() return vim.g.timer_result end) then
----   print('Only waiting a little bit of time!')
---- end
---- ```
----
---- @param time integer Number of milliseconds to wait
---- @param callback? fun(): boolean Optional callback. Waits until {callback} returns true
---- @param interval? integer (Approximate) number of milliseconds to wait between polls
---- @param fast_only? boolean If true, only |api-fast| events will be processed.
---- @return boolean, nil|-1|-2
----     - If {callback} returns `true` during the {time}: `true, nil`
----     - If {callback} never returns `true` during the {time}: `false, -1`
----     - If {callback} is interrupted during the {time}: `false, -2`
----     - If {callback} errors, the error is raised.
-function vim.wait(time, callback, interval, fast_only) end
+---@nodoc
+---@class vim._core
+vim._core = {}
+
+--- @nodoc
+--- Polls the main event loop for up to {timeout} milliseconds.
+--- @param timeout integer
+--- @param fast_only boolean
+function vim._core.loop_poll(timeout, fast_only) end
+
+--- @nodoc
+--- Flushes pending UI updates.
+function vim._core.ui_flush() end
+
+--- @nodoc
+--- Checks for interrupt, clears it, and consumes input if present.
+--- @return boolean
+function vim._core.check_interrupt() end
+
+--- @nodoc
+--- Executes one Ex command line obtained from `getline`, which is also called for any
+--- continuation lines (`:append` text, `:function` body, heredoc, …). See `vim._core.exmode`.
+--- @param getline fun(): string?
+--- @return boolean # false if {getline} returned nil before any line was read (EOF).
+function vim._core.ex_docmd(getline) end
+
+--- @nodoc
+--- Parses `keys` (internal representation) into a list of key chords. See |vim.keycode()|.
+--- @param keys string
+--- @return vim.keycode.chord[]
+function vim._core.keyparse(keys) end
 
 --- Subscribe to |ui-events|, similar to |nvim_ui_attach()| but receive events in a Lua callback.
 --- Used to implement screen elements like popupmenu or message handling in Lua.
@@ -229,8 +221,9 @@ function vim.wait(time, callback, interval, fast_only) end
 --- {callback} receives event name plus additional parameters. See |ui-popupmenu|
 --- and the sections below for event format for respective events.
 ---
---- Callbacks for `msg_show` events are executed in |api-fast| context; showing
---- the message should be scheduled.
+--- Callbacks for `msg_show` events originating from internal messages (as
+--- opposed to events from commands or API calls) are executed in |api-fast|
+--- context; showing the message needs to be scheduled.
 ---
 --- Excessive errors inside the callback will result in forced detachment.
 ---
@@ -266,7 +259,9 @@ function vim.wait(time, callback, interval, fast_only) end
 ---               enable events for the respective UI element.
 ---             - {set_cmdheight}? (`boolean`) If false, avoid setting
 ---               'cmdheight' to 0 when `ext_messages` is enabled.
---- @param callback fun(event: string, ...) Function called for each UI event
+--- @param callback fun(event: string, ...): any Function called for each UI event.
+---                 A truthy return value signals to Nvim that the event is handled,
+---                 in which case it is not propagated to remote UIs.
 function vim.ui_attach(ns, opts, callback) end
 
 --- Detach a callback previously attached with |vim.ui_attach()| for the

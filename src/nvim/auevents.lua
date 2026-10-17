@@ -1,7 +1,7 @@
 return {
   --- @type table<string,boolean>
   --- Keys are events names.
-  --- Values are boolean indicating whether the event is window-local.
+  --- Value is true if the event is window-local, else false.
   events = {
     BufAdd = true, -- after adding a buffer to the buffer list
     BufDelete = true, -- deleting a buffer from the buffer list
@@ -10,7 +10,6 @@ return {
     BufFilePre = true, -- before renaming a buffer
     BufHidden = true, -- just after buffer becomes hidden
     BufLeave = true, -- before leaving a buffer
-    BufModifiedSet = true, -- after the 'modified' state of a buffer changes
     BufNew = true, -- after creating any buffer
     BufNewFile = true, -- when creating a buffer for a new file
     BufReadCmd = true, -- read buffer using command
@@ -23,8 +22,10 @@ return {
     BufWriteCmd = true, -- write buffer using command
     BufWritePost = true, -- after writing a buffer
     BufWritePre = true, -- before writing a buffer
+    ChanClose = false,
     ChanInfo = false, -- info was received about channel
     ChanOpen = false, -- channel was opened
+    CmdAtom = false, -- after an atomic user operation (motion, operator, insert, mapping, …)
     CmdUndefined = false, -- command undefined
     CmdlineChanged = false, -- command line was modified
     CmdlineEnter = false, -- after entering cmdline mode
@@ -81,18 +82,24 @@ return {
     LspProgress = false, -- after a LSP progress update
     LspRequest = false, -- after an LSP request is started, canceled, or completed
     LspTokenUpdate = false, -- after a visible LSP token is updated
+    MarkSet = false, -- after a mark is set
     MenuPopup = false, -- just before popup menu is displayed
     ModeChanged = false, -- after changing the mode
     OptionSet = false, -- after setting any option
     QuickFixCmdPost = false, -- after :make, :grep etc.
     QuickFixCmdPre = false, -- before :make, :grep etc.
     QuitPre = false, -- before :quit
+    PackChangedPre = false, -- before trying to change state of `vim.pack` plugin
+    PackChanged = false, -- after changing state of `vim.pack` plugin
+    Progress = false, -- after showing/updating a progress message
     RecordingEnter = true, -- when starting to record a macro
     RecordingLeave = true, -- just before a macro stops recording
     RemoteReply = false, -- upon string reception from a remote vim
     SafeState = false, -- going to wait for a character
     SearchWrapped = true, -- after the search wrapped around
     SessionLoadPost = false, -- after loading a session file
+    SessionLoadPre = false, -- before loading a session file
+    SessionWritePre = false, -- before writing a session file
     SessionWritePost = false, -- after writing a session file
     ShellCmdPost = false, -- after ":!cmd"
     ShellFilterPost = true, -- after ":1,2!cmd", ":w !cmd", ":r !cmd".
@@ -105,9 +112,11 @@ return {
     StdinReadPre = false, -- before reading from stdin
     SwapExists = false, -- found existing swap file
     Syntax = false, -- syntax selected
-    TabClosed = false, -- a tab has closed
+    TabClosed = false, -- after closing a tab page
+    TabClosedPre = false, -- before closing a tab page
     TabEnter = false, -- after entering a tab page
     TabLeave = false, -- before leaving a tab page
+    TabMoved = false, -- after a tab was moved
     TabNew = false, -- when creating a new tab
     TabNewEntered = false, -- after entering a new tab
     TermChanged = false, -- after changing 'term'
@@ -121,6 +130,8 @@ return {
     TextChangedI = true, -- text was modified in Insert mode(no popup)
     TextChangedP = true, -- text was modified in Insert mode(popup)
     TextChangedT = true, -- text was modified in Terminal mode
+    TextPutPost = true, -- after some text was put
+    TextPutPre = true, -- before some text was put
     TextYankPost = true, -- after a yank or delete was done (y, d, c)
     UIEnter = false, -- after UI attaches
     UILeave = false, -- after UI detaches
@@ -134,7 +145,8 @@ return {
     WinClosed = true, -- after closing a window
     WinEnter = true, -- after entering a window
     WinLeave = true, -- before leaving a window
-    WinNew = false, -- when entering a new window
+    WinNewPre = false, -- before creating a new window
+    WinNew = false, -- after creating a new window
     WinResized = true, -- after a window was resized
     WinScrolled = true, -- after a window was scrolled or resized
   },
@@ -150,7 +162,6 @@ return {
   --- @type table<string,true>
   --- List of Nvim-specific events or aliases for generating syntax file.
   nvim_specific = {
-    BufModifiedSet = true,
     DiagnosticChanged = true,
     LspAttach = true,
     LspDetach = true,
@@ -158,9 +169,14 @@ return {
     LspProgress = true,
     LspRequest = true,
     LspTokenUpdate = true,
+    PackChangedPre = true,
+    PackChanged = true,
+    Progress = true,
     RecordingEnter = true,
     RecordingLeave = true,
+    SessionWritePre = true,
     Signal = true,
+    TabMoved = true,
     TabNewEntered = true,
     TermClose = true,
     TermOpen = true,

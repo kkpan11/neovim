@@ -39,9 +39,7 @@ typedef struct {
   bool has_type_key;  ///< True if type key is present.
 } LuaTableProps;
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "lua/converter.c.generated.h"
-#endif
+#include "lua/converter.c.generated.h"
 
 #define TYPE_IDX_VALUE true
 #define VAL_IDX_VALUE false
@@ -455,10 +453,11 @@ static bool typval_conv_special = false;
     lua_pushlstring(lstate, blob_ != NULL ? blob_->bv_ga.ga_data : "", (size_t)(len)); \
   } while (0)
 
-#define TYPVAL_ENCODE_CONV_FUNC_START(tv, fun) \
+#define TYPVAL_ENCODE_CONV_FUNC_START(tv, fun, prefix) \
   do { \
-    ufunc_T *fp = find_func(fun); \
-    if (fp != NULL && fp->uf_flags & FC_LUAREF) { \
+    const char *const fun_ = (fun); \
+    ufunc_T *fp; \
+    if (fun_ != NULL && (fp = find_func(fun_)) != NULL && fp->uf_flags & FC_LUAREF) { \
       nlua_pushref(lstate, fp->uf_luaref); \
     } else { \
       TYPVAL_ENCODE_CONV_NIL(tv); \
@@ -729,18 +728,11 @@ void nlua_push_Array(lua_State *lstate, const Array array, int flags)
   }
 }
 
-#define GENERATE_INDEX_FUNCTION(type) \
-  void nlua_push_##type(lua_State *lstate, const type item, int flags) \
-  FUNC_ATTR_NONNULL_ALL \
-  { \
-    lua_pushnumber(lstate, (lua_Number)(item)); \
-  }
-
-GENERATE_INDEX_FUNCTION(Buffer)
-GENERATE_INDEX_FUNCTION(Window)
-GENERATE_INDEX_FUNCTION(Tabpage)
-
-#undef GENERATE_INDEX_FUNCTION
+void nlua_push_handle(lua_State *lstate, const handle_T item, int flags)
+  FUNC_ATTR_NONNULL_ALL
+{
+  lua_pushnumber(lstate, (lua_Number)item);
+}
 
 /// Convert given Object to Lua value
 ///
@@ -749,6 +741,7 @@ void nlua_push_Object(lua_State *lstate, Object *obj, int flags)
   FUNC_ATTR_NONNULL_ALL
 {
   switch (obj->type) {
+  case kObjectTypeUnset:
   case kObjectTypeNil:
     if (flags & kNluaPushSpecial) {
       lua_pushnil(lstate);
@@ -982,7 +975,7 @@ Array nlua_pop_Array(lua_State *lstate, Arena *arena, Error *err)
 
 /// Convert Lua table to dictionary
 ///
-/// Always pops one value from the stack. Does not check whether whether topmost
+/// Always pops one value from the stack. Does not check whether topmost
 /// value on the stack is a table.
 ///
 /// @param  lstate  Lua interpreter state.
@@ -1303,7 +1296,7 @@ void nlua_pop_keydict(lua_State *L, void *retval, FieldHashfn hashy, char **err_
     // [dict, key, value]
     size_t len;
     const char *s = lua_tolstring(L, -2, &len);
-    KeySetLink *field = hashy(s, len);
+    const KeySetLink *field = hashy(s, len);
     if (!field) {
       api_set_error(err, kErrorTypeValidation, "invalid key: %.*s", (int)len, s);
       lua_pop(L, 3);  // []

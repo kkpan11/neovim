@@ -17,6 +17,8 @@ TUI and GUI (assuming the UI supports the given feature). See |TUI| for notes
 specific to the terminal UI. Help tags with the "gui-" prefix refer to UI
 features, whereas help tags with the "ui-" prefix refer to the |ui-protocol|.
 
+                                      Type |gO| to see the table of contents.
+
 ==============================================================================
 Third-party GUIs                                *third-party-guis* *vscode*
 
@@ -34,8 +36,6 @@ a Nvim GUI.
 - VimR (macOS) https://github.com/qvacua/vimr
 - Others https://github.com/neovim/neovim/wiki/Related-projects#gui
 
-                                      Type |gO| to see the table of contents.
-
 ==============================================================================
 Starting the GUI                                *gui-config* *gui-start*
 
@@ -47,44 +47,100 @@ can connect to any Nvim instance).
 Example: this sets "g:gui" to the value of the UI's "rgb" field:    >
         :autocmd UIEnter * let g:gui = filter(nvim_list_uis(),{k,v-> v.chan==v:event.chan})[0].rgb
 <
+								*ui-lifecycle*
+Nvim's |clientserver| architecture allows you to |:restart|, |:detach| (Nvim
+continues in the background), or |:connect| to another instance.
+
+Use cases:
+- keep the session running on remote machines after (unexpected) SSH disconnect
+- open files in an existing session from your OS file explorer
+- run Nvim as a background process (daemon/service), atttach/detach as needed
+
 ------------------------------------------------------------------------------
 Stop or detach the current UI
 
-                                                *:detach*
-:detach
-                Detaches the current UI. Other UIs (if any) remain attached.
-                The server (typically `nvim --embed`) continues running as
-                a background process, and you can reattach to it later.
-                Before detaching, you may want to note the server address:
+                                                             *:detach* *E5768*
+:[range]detach  Detaches the current UI. Other UIs (if any) remain attached,
+                unless [range] was given. If [range] is "%", all UIs _except_
+                the current UI are detached: >vim
+
+                    :%detach
+
+<                The server (typically `nvim --embed`) continues running as
+                a background process. Use |:connect| or |--remote-ui| to
+                reattach. Before detaching, you may want to note the server
+                address:
                 >vim
                     :echo v:servername
 <
-                Note: The server closes the UI RPC channel, so :detach
-                inherently "works" for all UIs. But if a UI isn't expecting
-                the channel to be closed, it may be (incorrectly) reported as
-                an error.
+                Note: The server closes the UI RPC channel, so :detach works
+                for any GUI/UI; but if the client isn't expecting this, it may
+                (incorrectly) report an error.
 
-                Note: Not supported on Windows, currently.
+                                                                    *:detach!*
+:detach!        Sets the current UI as "detachable" without detaching it now:
+                the UI stays attached, but if it later disconnects
+                unexpectedly (e.g. host terminal closed, ssh disconnect,
+                etc.), the server keeps running in the background.
+                Use |:connect| or |--remote-ui| to reattach.
+
+                Same as |nvim_chan_set()| `detach=true` on the UI channel.
+                Preserved across |:restart|.
+
+                If you always want Nvim to survive accidental disconnect, put
+                this in your config: >vim
+
+                    silent detach!
+<
 
 ------------------------------------------------------------------------------
-Restart the embedded Nvim server
+Restart Nvim
 
-                                                *:restart*
-:restart
-                Detaches the embedded server from the UI and then restarts
-                it. This fails when changes have been made
-                and Vim refuses to |abandon| the current buffer.
+:restart[!] [+cmd] [command]			*:restart* *:restart!* *E5201*
+                Restarts Nvim. Saves and restores the current session, unless
+                [!] is given. Sets |v:exitreason|. See also |ZR|.
 
-                Note: This only works if the UI started the server initially.
-:restart!
-                Force restarts the embedded server irrespective of unsaved
-                buffers.
+                1. Saves the current session (unless [!] was given).
+                2. Stops Nvim using `:qall` (or |+cmd|, if given).
+                3. Starts a new Nvim server using the same |v:argv| (except
+                   `-- [file…]` files and `-S [file]`), and sets |v:startreason|.
+                4. Restores the saved session (unless [!] was given).
+                5. Attaches all UIs to the new Nvim server and runs `[command]`
+                   on it.
+
+                Example: discard changes and stop with `:qall!`, then restart: >
+                    :restart +qall!
+<                Example: restart and (manually) restore the session: >
+                    :mksession! Session.vim | restart! source Session.vim
+<                Example: restart and update plugins: >
+                    :restart packupdate
+<
+                Note:
+                • Only works if the UI and server are on the same system.
+                • Windows limitation: during +cmd execution, |v:servername|
+                  refers to a temporary address.
+                • If no UI handles the "restart" event, this leaves a dangling
+                  process.
+                • To adjust what `:restart` restores, set 'sessionoptions'.
+
+------------------------------------------------------------------------------
+Connect UI to a different server
+
+:connect {address}					*:connect*
+                Attaches the UI to another Nvim instance: detaches from the
+                current server, then attaches to {address}.
+
+                Note: If the current UI hasn't implemented the "connect" UI
+                event, this command is equivalent to |:detach|.
+
+:connect! {address}
+                Same as |:connect| but it also stops the detached server if
+                no other UI is currently attached to it.
 
 ------------------------------------------------------------------------------
 GUI commands
 
-                                                *:winp* *:winpos* *E188*
-:winp[os]
+:winp[os]					*:winp* *:winpos* *E188*
                 Display current position of the top left corner of the GUI vim
                 window in pixels.  Does not work in all versions.
                 Also see |getwinpos()|, |getwinposx()| and |getwinposy()|.
@@ -97,8 +153,7 @@ GUI commands
                 remembered until the window is opened.  The position is
                 adjusted to make the window fit on the screen (if possible).
 
-                                            *:wi* *:win* *:winsize* *E465*
-:win[size] {width} {height}
+:win[size] {width} {height}			*:wi* *:win* *:winsize* *E465*
                 Set the window height to {width} by {height} characters.
                 Obsolete, use ":set lines=11 columns=22".
 
@@ -110,63 +165,58 @@ Overview of what the mouse buttons do, when 'mousemodel' is "extend":
 
                *<S-LeftMouse>* *<A-RightMouse>* *<S-RightMouse>* *<RightDrag>*
                                                  *<RightRelease>* *<LeftDrag>*
-Normal Mode: >
-  event         position     selection        change  action
-                 cursor                       window
-  ---------------------------------------------------------------------------
-  <LeftMouse>     yes          end              yes
-  <C-LeftMouse>   yes          end              yes    "CTRL-]" (2)
-  <S-LeftMouse>   yes       no change           yes    "*" (2)
-  <LeftDrag>      yes     start or extend (1)   no
-  <LeftRelease>   yes     start or extend (1)   no
-  <MiddleMouse>   yes       if not active       no     put
-  <MiddleMouse>   yes       if active           no     yank and put
-  <RightMouse>    yes     start or extend       yes
-  <A-RightMouse>  yes start or extend blockw.   yes
-  <S-RightMouse>  yes        no change          yes    "#" (2)
-  <C-RightMouse>  no         no change          no     "CTRL-T"
-  <RightDrag>     yes         extend            no
-  <RightRelease>  yes         extend            no
+Normal Mode:
 
-Insert or Replace Mode: >
-  event         position     selection        change  action
-                 cursor                       window
-  ---------------------------------------------------------------------------
-  <LeftMouse>     yes     (cannot be active)    yes
-  <C-LeftMouse>   yes     (cannot be active)    yes    "CTRL-O^]" (2)
-  <S-LeftMouse>   yes     (cannot be active)    yes    "CTRL-O*" (2)
-  <LeftDrag>      yes     start or extend (1)   no     like CTRL-O (1)
-  <LeftRelease>   yes     start or extend (1)   no     like CTRL-O (1)
-  <MiddleMouse>   no      (cannot be active)    no     put register
-  <RightMouse>    yes     start or extend       yes    like CTRL-O
-  <A-RightMouse>  yes start or extend blockw.   yes
-  <S-RightMouse>  yes     (cannot be active)    yes    "CTRL-O#" (2)
-  <C-RightMouse>  no      (cannot be active)    no     "CTRL-O CTRL-T"
+  event		position cursor	selection	  change window	action ~
+  <LeftMouse>		yes	end			yes
+  <C-LeftMouse>		no	no change		no	toggle multicursor
+  <S-LeftMouse>		yes	no change		yes	"*" (2)
+  <LeftDrag>		yes	start or extend (1)	no
+  <LeftRelease>		yes	start or extend (1)	no
+  <MiddleMouse>		yes	if not active		no	put
+  <MiddleMouse>		yes	if active		no	yank and put
+  <RightMouse>		yes	start or extend		yes
+  <A-RightMouse>	yes	start or extend blockw.	yes
+  <S-RightMouse>	yes	no change		yes	"#" (2)
+  <C-RightMouse>	no	no change		no	"CTRL-T"
+  <RightDrag>		yes	extend			no
+  <RightRelease>	yes	extend			no
 
-In a help window: >
-  event         position     selection        change  action
-                 cursor                       window
-  ---------------------------------------------------------------------------
-  <2-LeftMouse>   yes     (cannot be active)    no     "^]" (jump to help tag)
+Insert or Replace Mode:
+
+  event		position cursor	selection	  change window	action ~
+  <LeftMouse>		yes	(cannot be active)	yes
+  <C-LeftMouse>		no	(cannot be active)	no	no-op
+  <S-LeftMouse>		yes	(cannot be active)	yes	"CTRL-O*" (2)
+  <LeftDrag>		yes	start or extend (1)	no	like CTRL-O (1)
+  <LeftRelease>		yes	start or extend (1)	no	like CTRL-O (1)
+  <MiddleMouse>		no	(cannot be active)	no	put register
+  <RightMouse>		yes	start or extend		yes	like CTRL-O
+  <A-RightMouse>	yes	start or extend blockw.	yes
+  <S-RightMouse>	yes	(cannot be active)	yes	"CTRL-O#" (2)
+  <C-RightMouse>	no	(cannot be active)	no	"CTRL-O CTRL-T"
+
+In a help window:
+
+  event		position cursor	selection	  change window	action ~
+  <2-LeftMouse>		yes	(cannot be active)	no	"^]" (jump to help tag)
 
 When 'mousemodel' is "popup", these are different:
 
                                                                *<A-LeftMouse>*
-Normal Mode: >
-  event         position     selection        change  action
-                 cursor                       window
-  ---------------------------------------------------------------------------
-  <S-LeftMouse>   yes     start or extend (1)   no
-  <A-LeftMouse>   yes     start/extend blockw   no
-  <RightMouse>    no      popup menu            no
+Normal Mode:
 
-Insert or Replace Mode: >
-  event         position     selection        change  action
-                 cursor                       window
-  ---------------------------------------------------------------------------
-  <S-LeftMouse>   yes     start or extend (1)   no     like CTRL-O (1)
-  <A-LeftMouse>   yes     start/extend blockw   no
-  <RightMouse>    no      popup menu            no
+  event		position cursor	selection	  change window	action ~
+  <S-LeftMouse>		yes	start or extend (1)	no
+  <A-LeftMouse>		yes	start/extend blockw	no
+  <RightMouse>		no	popup menu		no
+
+Insert or Replace Mode:
+
+  event		position cursor	selection	  change window	action ~
+  <S-LeftMouse>		yes	start or extend (1)	no	like CTRL-O (1)
+  <A-LeftMouse>		yes	start/extend blockw	no
+  <RightMouse>		no	popup menu		no
 
 (1) only if mouse pointer moved since press
 (2) only if click is in same buffer
@@ -198,13 +248,12 @@ alt key is pressed (it may move the window).
 
                 *double-click* *<2-LeftMouse>* *<3-LeftMouse>* *<4-LeftMouse>*
 Double, triple and quadruple clicks are supported.  For selecting text, extra
-clicks extend the selection: >
+clicks extend the selection:
 
-        click           select
-        ---------------------------------
-        double          word or % match
-        triple          line
-        quadruple       rectangular block
+	click		select ~
+	double		word or % match
+	triple		line
+	quadruple	rectangular block
 
 Exception: In a :help window, double-click jumps to help for the word that is
 clicked on.
@@ -233,24 +282,24 @@ This is like using CTRL-O in Insert mode.  Select mode is used when the
                                                 *X1Mouse* *X1Drag* *X1Release*
                                                 *X2Mouse* *X2Drag* *X2Release*
                                               *<MiddleRelease>* *<MiddleDrag>*
-Mouse clicks can be mapped using these |keycodes|: >
-      code           mouse button              normal action
-  ---------------------------------------------------------------------------
-  <LeftMouse>     left pressed               set cursor position
-  <LeftDrag>      left moved while pressed   extend selection
-  <LeftRelease>   left released              set selection end
-  <MiddleMouse>   middle pressed             paste text at cursor position
-  <MiddleDrag>    middle moved while pressed -
-  <MiddleRelease> middle released            -
-  <RightMouse>    right pressed              extend selection
-  <RightDrag>     right moved while pressed  extend selection
-  <RightRelease>  right released             set selection end
-  <X1Mouse>       X1 button pressed          -
-  <X1Drag>        X1 moved while pressed     -
-  <X1Release>     X1 button release          -
-  <X2Mouse>       X2 button pressed          -
-  <X2Drag>        X2 moved while pressed     -
-  <X2Release>     X2 button release          -
+Mouse clicks can be mapped using these |keycodes|:
+
+  code			mouse button			normal action ~
+  <LeftMouse>		left pressed			set cursor position
+  <LeftDrag>		left moved while pressed	extend selection
+  <LeftRelease>		left released			set selection end
+  <MiddleMouse>		middle pressed			paste text at cursor position
+  <MiddleDrag>		middle moved while pressed	-
+  <MiddleRelease>	middle released			-
+  <RightMouse>		right pressed			extend selection
+  <RightDrag>		right moved while pressed	extend selection
+  <RightRelease>	right released			set selection end
+  <X1Mouse>		X1 button pressed		-
+  <X1Drag>		X1 moved while pressed		-
+  <X1Release>		X1 button release		-
+  <X2Mouse>		X2 button pressed		-
+  <X2Drag>		X2 moved while pressed		-
+  <X2Release>		X2 button release		-
 
 The X1 and X2 buttons refer to the extra buttons found on some mice (e.g. the
 right thumb).
@@ -270,7 +319,7 @@ Note the use of ":noremap" instead of "map" to avoid a recursive mapping.
 Map the X1 and X2 buttons to go forwards and backwards in the jump list, see
 |CTRL-O| and |CTRL-I|.
 
-                                                *mouse-swap-buttons*
+                                       *mouse-swap-buttons* *pi_swapmouse*
 To swap the meaning of the left and right mouse buttons: >vim
         :noremap        <LeftMouse>     <RightMouse>
         :noremap        <LeftDrag>      <RightDrag>
@@ -288,6 +337,10 @@ To swap the meaning of the left and right mouse buttons: >vim
         :noremap!       <RightRelease>  <LeftRelease>
 <
 
+The `swapmouse` plugin does exactly this. Use |pack-add| to load it: >vim
+    :packadd! swapmouse
+<
+
 ==============================================================================
 Scrollbars                                              *gui-scrollbars*
 
@@ -296,26 +349,26 @@ configure which ones appear with the 'guioptions' option.
 
 The interface looks like this (with `:set guioptions=mlrb`):
 >
-                       +------------------------------+ `
-                       | File  Edit              Help | <- Menu bar (m) `
-                       +-+--------------------------+-+ `
-                       |^|                          |^| `
-                       |#| Text area.               |#| `
-                       | |                          | | `
-                       |v|__________________________|v| `
- Normal status line -> |-+ File.c              5,2  +-| `
- between Vim windows   |^|""""""""""""""""""""""""""|^| `
-                       | |                          | | `
-                       | | Another file buffer.     | | `
-                       | |                          | | `
-                       |#|                          |#| `
- Left scrollbar (l) -> |#|                          |#| <- Right `
-                       |#|                          |#|    scrollbar (r) `
-                       | |                          | | `
-                       |v|                          |v| `
-                       +-+--------------------------+-+ `
-                       | |< ####                   >| | <- Bottom `
-                       +-+--------------------------+-+    scrollbar (b) `
+                       +------------------------------+
+                       | File  Edit              Help | <- Menu bar (m)
+                       +-+--------------------------+-+
+                       |^|                          |^|
+                       |#| Text area.               |#|
+                       | |                          | |
+                       |v|__________________________|v|
+ Normal status line -> |-+ File.c              5,2  +-|
+ between Vim windows   |^|""""""""""""""""""""""""""|^|
+                       | |                          | |
+                       | | Another file buffer.     | |
+                       | |                          | |
+                       |#|                          |#|
+ Left scrollbar (l) -> |#|                          |#| <- Right
+                       |#|                          |#|    scrollbar (r)
+                       | |                          | |
+                       |v|                          |v|
+                       +-+--------------------------+-+
+                       | |< ####                   >| | <- Bottom
+                       +-+--------------------------+-+    scrollbar (b)
 <
 Any of the scrollbar or menu components may be turned off by not putting the
 appropriate letter in the 'guioptions' string.  The bottom scrollbar is
@@ -429,7 +482,7 @@ Creating New Menus                                      *creating-menus*
 
                                 *:me*  *:menu*  *:noreme*  *:noremenu*
                                 *E330* *E327* *E331* *E336* *E333*
-                                *E328* *E329* *E337* *E792*
+                                *E328* *E329* *E337* *E792* *E1310*
 To create a new menu item, use the ":menu" commands.  They are mostly like
 the ":map" set of commands (see |map-modes|), but the first argument is a menu
 item name, given as a path of menus and submenus with a '.' between them,
@@ -445,8 +498,8 @@ the mouse button down on this will pop up a menu containing the item
 which when selected, performs the operation.
 
 To create a menu for terminal mode, use |:tlmenu| instead of |:tmenu| unlike
-key mapping (|:tmap|). This is because |:tmenu| is already used for defining
-tooltips for menus. See |terminal-input|.
+key mapping (|:tmap|).  This is because |:tmenu| is already used for defining
+tooltips for menus.  See |terminal-input|.
 
 Special characters in a menu name:
 
@@ -695,9 +748,12 @@ when the right mouse button is pressed, if 'mousemodel' is set to popup or
 popup_setpos.
 
 The default "PopUp" menu is: >vim
-    anoremenu PopUp.Go\ to\ definition      <Cmd>lua vim.lsp.buf.definition()<CR>
     amenu     PopUp.Open\ in\ web\ browser  gx
     anoremenu PopUp.Inspect                 <Cmd>Inspect<CR>
+    anoremenu PopUp.Go\ to\ definition      <Cmd>lua vim.lsp.buf.definition()<CR>
+    anoremenu PopUp.Show\ Diagnostics       <Cmd>lua vim.diagnostic.open_float()<CR>
+    anoremenu PopUp.Show\ All\ Diagnostics  <Cmd>lua vim.diagnostic.setqflist()<CR>
+    anoremenu PopUp.Configure\ Diagnostics  <Cmd>help vim.diagnostic.config()<CR>
     anoremenu PopUp.-1-                     <Nop>
     vnoremenu PopUp.Cut                     "+x
     vnoremenu PopUp.Copy                    "+y
@@ -849,8 +905,8 @@ The tip is defined like this: >
 And delete it with: >
         :tunmenu MyMenu.Hello
 
-Tooltips are currently only supported for the X11 and Win32 GUI.  However, they
-should appear for the other gui platforms in the not too distant future.
+Tooltips are currently only supported for the X11 and Win32 GUI.  However,
+they should appear for the other gui platforms in the not too distant future.
 
 The ":tmenu" command works just like other menu commands, it uses the same
 arguments.  ":tunmenu" deletes an existing menu tip, in the same way as the

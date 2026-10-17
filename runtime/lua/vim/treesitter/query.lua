@@ -2,8 +2,10 @@
 --- text. See |vim.treesitter.query.parse()| for a working example.
 
 local api = vim.api
+local nvim_on = require('vim._core.util').nvim_on
 local language = require('vim.treesitter.language')
 local memoize = vim.func._memoize
+local cmp_ge = require('vim.treesitter._range').cmp_pos.ge
 
 local MODELINE_FORMAT = '^;+%s*inherits%s*:?%s*([a-z_,()]+)%s*$'
 local EXTENDS_FORMAT = '^;+%s*extends%s*$'
@@ -23,6 +25,7 @@ local M = {}
 local Query = {}
 Query.__index = Query
 
+---@param name string
 local function is_directive(name)
   return string.sub(name, -1) == '!'
 end
@@ -127,6 +130,8 @@ local function dedupe_files(files)
   return result
 end
 
+--- @param filename string
+--- @param read_quantifier '*a'|'*l'
 local function safe_read(filename, read_quantifier)
   local file, err = io.open(filename, 'r')
   if not file then
@@ -139,6 +144,9 @@ end
 
 --- Adds {ilang} to {base_langs}, only if {ilang} is different than {lang}
 ---
+---@param base_langs string[]
+---@param lang string
+---@param ilang string
 ---@return boolean true If lang == ilang
 local function add_included_lang(base_langs, lang, ilang)
   if lang == ilang then
@@ -193,7 +201,7 @@ function M.get_files(lang, query_name, is_included)
       local langlist = modeline:match(MODELINE_FORMAT)
       if langlist then
         ---@diagnostic disable-next-line:param-type-mismatch
-        for _, incllang in ipairs(vim.split(langlist, ',', true)) do
+        for _, incllang in ipairs(vim.split(langlist, ',')) do
           local is_optional = incllang:match('%(.*%)')
 
           if is_optional then
@@ -267,8 +275,8 @@ local explicit_queries = setmetatable({}, {
 ---   'c',
 ---   'highlights',
 ---   [[;inherits c
----   (identifier) @spell]])
---- ]])
+---   (identifier) @spell]]
+--- )
 --- ```
 ---
 ---@param lang string Language to use for the query
@@ -332,14 +340,17 @@ M.get = memoize('concat-2', function(lang, query_name)
   return M.parse(lang, query_string)
 end, false)
 
-api.nvim_create_autocmd('OptionSet', {
-  pattern = { 'runtimepath' },
-  group = api.nvim_create_augroup('nvim.treesitter.query_cache_reset', { clear = true }),
-  callback = function()
+nvim_on(
+  'OptionSet',
+  api.nvim_create_augroup('nvim.treesitter.query_cache_reset', { clear = true }),
+  {
+    pattern = { 'runtimepath' },
+  },
+  function()
     --- @diagnostic disable-next-line: undefined-field LuaLS bad at generics
     M.get:clear()
-  end,
-})
+  end
+)
 
 --- Parses a {query} string and returns a `Query` object (|lua-treesitter-query|), which can be used
 --- to search the tree for the query patterns (via |Query:iter_captures()|, |Query:iter_matches()|),
@@ -380,7 +391,7 @@ end, false)
 --- handling the "any" vs "all" semantics. They are called from the
 --- predicate_handlers table with the appropriate arguments for each predicate.
 local impl = {
-  --- @param match table<integer,TSNode[]>
+  --- @param match table<integer,TSNode[]?>
   --- @param source integer|string
   --- @param predicate any[]
   --- @param any boolean
@@ -440,6 +451,7 @@ local impl = {
 
   ['match'] = (function()
     local magic_prefixes = { ['\\v'] = true, ['\\m'] = true, ['\\M'] = true, ['\\V'] = true }
+    --- @param str string
     local function check_magic(str)
       if string.len(str) < 2 or magic_prefixes[string.sub(str, 1, 2)] then
         return str
@@ -543,6 +555,7 @@ local predicate_handlers = {
     return impl['contains'](match, source, predicate, true)
   end,
 
+  --- @param predicate any[] & { string_set?: table<string, boolean> }
   ['any-of?'] = function(match, _, source, predicate)
     local nodes = match[predicate[2]]
     if not nodes or #nodes == 0 then
@@ -554,7 +567,7 @@ local predicate_handlers = {
 
       -- Since 'predicate' will not be used by callers of this function, use it
       -- to store a string set built from the list of words to check against.
-      local string_set = predicate['string_set'] --- @type table<string, boolean>
+      local string_set = predicate['string_set']
       if not string_set then
         string_set = {}
         for i = 3, #predicate do
@@ -592,7 +605,8 @@ local predicate_handlers = {
     end
 
     for _, node in ipairs(nodes) do
-      if vim.list_contains({ unpack(predicate, 3) }, node:parent():type()) then
+      local parent = node:parent()
+      if parent and vim.list_contains({ unpack(predicate, 3) }, parent:type()) then
         return true
       end
     end
@@ -607,7 +621,8 @@ predicate_handlers['any-vim-match?'] = predicate_handlers['any-match?']
 ---@nodoc
 ---@class vim.treesitter.query.TSMetadata
 ---@field range? Range
----@field conceal? string
+---@field offset? Range4
+---@field conceal? string|boolean
 ---@field bo.commentstring? string
 ---@field [integer]? vim.treesitter.query.TSMetadata
 ---@field [string]? integer|string
@@ -645,29 +660,17 @@ local directive_handlers = {
     if not nodes or #nodes == 0 then
       return
     end
-    assert(#nodes == 1, '#offset! does not support captures on multiple nodes')
-
-    local node = nodes[1]
 
     if not metadata[capture_id] then
       metadata[capture_id] = {}
     end
 
-    local range = metadata[capture_id].range or { node:range() }
-    local start_row_offset = pred[3] or 0
-    local start_col_offset = pred[4] or 0
-    local end_row_offset = pred[5] or 0
-    local end_col_offset = pred[6] or 0
-
-    range[1] = range[1] + start_row_offset
-    range[2] = range[2] + start_col_offset
-    range[3] = range[3] + end_row_offset
-    range[4] = range[4] + end_col_offset
-
-    -- If this produces an invalid range, we just skip it.
-    if range[1] < range[3] or (range[1] == range[3] and range[2] <= range[4]) then
-      metadata[capture_id].range = range
-    end
+    metadata[capture_id].offset = {
+      pred[3] --[[@as integer]] or 0,
+      pred[4] --[[@as integer]] or 0,
+      pred[5] --[[@as integer]] or 0,
+      pred[6] --[[@as integer]] or 0,
+    }
   end,
   -- Transform the content of the node
   -- Example: (#gsub! @_node ".*%.(.*)" "%1")
@@ -716,42 +719,42 @@ local directive_handlers = {
     local start_row, start_col, end_row, end_col = node:range()
 
     local node_text = vim.split(vim.treesitter.get_node_text(node, bufnr), '\n')
-    if end_col == 0 then
-      -- get_node_text() will ignore the last line if the node ends at column 0
-      node_text[#node_text + 1] = ''
-    end
 
     local end_idx = #node_text
     local start_idx = 1
 
+    local end_line = node_text[end_idx]
     if trim_end_lines then
-      while end_idx > 0 and node_text[end_idx]:find('^%s*$') do
+      while end_line and end_line:find('^%s*$') do
         end_idx = end_idx - 1
+        end_line = node_text[end_idx]
         end_row = end_row - 1
         -- set the end position to the last column of the next line, or 0 if we just trimmed the
         -- last line
-        end_col = end_idx > 0 and #node_text[end_idx] or 0
+        end_col = end_line and #end_line or 0
       end
     end
     if trim_end_cols then
-      if end_idx == 0 then
+      if not end_line then
         end_row = start_row
         end_col = start_col
       else
-        local whitespace_start = node_text[end_idx]:find('(%s*)$')
+        local whitespace_start = assert(end_line:find('(%s*)$'))
         end_col = (whitespace_start - 1) + (end_idx == 1 and start_col or 0)
       end
     end
 
+    local start_line = node_text[start_idx]
     if trim_start_lines then
-      while start_idx <= end_idx and node_text[start_idx]:find('^%s*$') do
+      while start_idx <= end_idx and assert(start_line):find('^%s*$') do
         start_idx = start_idx + 1
+        start_line = node_text[start_idx]
         start_row = start_row + 1
         start_col = 0
       end
     end
-    if trim_start_cols and node_text[start_idx] then
-      local _, whitespace_end = node_text[start_idx]:find('^(%s*)')
+    if trim_start_cols and start_line then
+      local _, whitespace_end = start_line:find('^(%s*)')
       whitespace_end = whitespace_end or 0
       start_col = (start_idx == 1 and start_col or 0) + whitespace_end
     end
@@ -769,16 +772,11 @@ local directive_handlers = {
 ---
 --- Override an existing predicate of the same name
 --- @field force? boolean
----
---- Use the correct implementation of the match table where capture IDs map to
---- a list of nodes instead of a single node. Defaults to true. This option will
---- be removed in a future release.
---- @field all? boolean
 
 --- Adds a new predicate to be used in queries
 ---
 ---@param name string Name of the predicate, without leading #
----@param handler fun(match: table<integer,TSNode[]>, pattern: integer, source: integer|string, predicate: any[], metadata: vim.treesitter.query.TSMetadata): boolean?
+---@param handler fun(match: table<integer,TSNode[]>, pattern: integer, source: integer|string, predicate: any[], metadata: vim.treesitter.query.TSMetadata): boolean? #
 ---   - see |vim.treesitter.query.add_directive()| for argument meanings
 ---@param opts? vim.treesitter.query.add_predicate.Opts
 function M.add_predicate(name, handler, opts)
@@ -793,21 +791,7 @@ function M.add_predicate(name, handler, opts)
     error(string.format('Overriding existing predicate %s', name))
   end
 
-  if opts.all ~= false then
-    predicate_handlers[name] = handler
-  else
-    --- @param match table<integer, TSNode[]>
-    local function wrapper(match, ...)
-      local m = {} ---@type table<integer, TSNode>
-      for k, v in pairs(match) do
-        if type(k) == 'number' then
-          m[k] = v[#v]
-        end
-      end
-      return handler(m, ...)
-    end
-    predicate_handlers[name] = wrapper
-  end
+  predicate_handlers[name] = handler
 end
 
 --- Adds a new directive to be used in queries
@@ -818,7 +802,7 @@ end
 --- metadata table `metadata[capture_id].key = value`
 ---
 ---@param name string Name of the directive, without leading #
----@param handler fun(match: table<integer,TSNode[]>, pattern: integer, source: integer|string, predicate: any[], metadata: vim.treesitter.query.TSMetadata)
+---@param handler fun(match: table<integer,TSNode[]>, pattern: integer, source: integer|string, predicate: any[], metadata: vim.treesitter.query.TSMetadata) #
 ---   - match: A table mapping capture IDs to a list of captured nodes
 ---   - pattern: the index of the matching pattern in the query file
 ---   - predicate: list of strings containing the full directive being called, e.g.
@@ -836,19 +820,7 @@ function M.add_directive(name, handler, opts)
     error(string.format('Overriding existing directive %s', name))
   end
 
-  if opts.all then
-    directive_handlers[name] = handler
-  else
-    --- @param match table<integer, TSNode[]>
-    local function wrapper(match, ...)
-      local m = {} ---@type table<integer, TSNode>
-      for k, v in pairs(match) do
-        m[k] = v[#v]
-      end
-      handler(m, ...)
-    end
-    directive_handlers[name] = wrapper
-  end
+  directive_handlers[name] = handler
 end
 
 --- Lists the currently available directives to use in queries.
@@ -869,7 +841,7 @@ end
 ---@param captures table<integer, TSNode[]>
 ---@param source integer|string
 ---@return boolean whether the predicates match
-function Query:_match_predicates(predicates, pattern_i, captures, source)
+function Query._match_predicates(predicates, pattern_i, captures, source)
   for _, predicate in ipairs(predicates) do
     local processed_name = predicate[1]
     local should_match = predicate[2]
@@ -895,7 +867,7 @@ end
 ---@param source integer|string
 ---@param captures table<integer, TSNode[]>
 ---@return vim.treesitter.query.TSMetadata metadata
-function Query:_apply_directives(directives, pattern_i, captures, source)
+function Query._apply_directives(_, directives, pattern_i, captures, source)
   ---@type vim.treesitter.query.TSMetadata
   local metadata = {}
 
@@ -958,37 +930,46 @@ end
 ---
 ---@param node TSNode under which the search will occur
 ---@param source (integer|string) Source buffer or string to extract text from
----@param start? integer Starting line for the search. Defaults to `node:start()`.
----@param stop? integer Stopping line for the search (end-exclusive). Defaults to `node:end_()`.
+---@param start_row? integer Starting line for the search. Defaults to `node:start()`.
+---@param end_row? integer Stopping line for the search (end-inclusive, unless `stop_col` is provided). Defaults to `node:end_()`.
 ---@param opts? table Optional keyword arguments:
+---   - end_col (integer) Stopping column for the search (end-exclusive).
+---   - match_limit (integer) Set the maximum number of in-progress matches (Default: none).
 ---   - max_start_depth (integer) if non-zero, sets the maximum start depth
 ---     for each match. This is used to prevent traversing too deep into a tree.
----   - match_limit (integer) Set the maximum number of in-progress matches (Default: 256).
+---   - start_col (integer) Starting column for the search.
 ---
----@return (fun(end_line: integer|nil): integer, TSNode, vim.treesitter.query.TSMetadata, TSQueryMatch, TSTree):
----        capture id, capture node, metadata, match, tree
+---@return (fun(end_line: integer|nil, end_col: integer|nil): integer, TSNode, vim.treesitter.query.TSMetadata, TSQueryMatch, TSTree):
+---        capture-id, capture-node, metadata, match, tree
 ---
 ---@note Captures are only returned if the query pattern of a specific capture contained predicates.
-function Query:iter_captures(node, source, start, stop, opts)
+function Query:iter_captures(node, source, start_row, end_row, opts)
   opts = opts or {}
-  opts.match_limit = opts.match_limit or 256
 
   if type(source) == 'number' and source == 0 then
     source = api.nvim_get_current_buf()
   end
 
-  start, stop = value_or_node_range(start, stop, node)
+  start_row, end_row = value_or_node_range(start_row, end_row, node)
 
-  -- Copy the tree to ensure it is valid during the entire lifetime of the iterator
-  local tree = node:tree():copy()
-  local cursor = vim._create_ts_querycursor(node, self.query, start, stop, opts)
+  local tree = node:tree()
+  local cursor = vim._create_ts_querycursor(node, self.query, {
+    start_row = start_row,
+    start_col = opts.start_col or 0,
+    end_row = end_row,
+    end_col = opts.end_col or 0,
+    max_start_depth = opts.max_start_depth,
+    match_limit = opts.match_limit,
+  })
 
   -- For faster checks that a match is not in the cache.
   local highest_cached_match_id = -1
   ---@type table<integer, vim.treesitter.query.TSMetadata>
   local match_cache = {}
 
-  local function iter(end_line)
+  ---@param end_line? integer
+  ---@param end_col? integer
+  local function iter(end_line, end_col)
     local capture, captured_node, match = cursor:next_capture()
 
     if not capture then
@@ -997,7 +978,7 @@ function Query:iter_captures(node, source, start, stop, opts)
 
     local match_id, pattern_i = match:info()
 
-    --- @type vim.treesitter.query.TSMetadata
+    --- @type vim.treesitter.query.TSMetadata?
     local metadata
     if match_id <= highest_cached_match_id then
       metadata = match_cache[match_id]
@@ -1011,11 +992,24 @@ function Query:iter_captures(node, source, start, stop, opts)
         local captures = match:captures()
 
         local predicates = processed_pattern.predicates
-        if not self:_match_predicates(predicates, pattern_i, captures, source) then
+        if not self._match_predicates(predicates, pattern_i, captures, source) then
           cursor:remove_match(match_id)
-          if end_line and captured_node:range() > end_line then
+
+          local row, col = captured_node:range()
+
+          local outside = false
+          if end_line then
+            if end_col then
+              outside = cmp_ge(row, col, end_line, end_col)
+            else
+              outside = row > end_line
+            end
+          end
+
+          if outside then
             return nil, captured_node, nil, nil
           end
+
           return iter(end_line) -- tail call: try next match
         end
 
@@ -1061,17 +1055,13 @@ end
 ---@param start? integer Starting line for the search. Defaults to `node:start()`.
 ---@param stop? integer Stopping line for the search (end-exclusive). Defaults to `node:end_()`.
 ---@param opts? table Optional keyword arguments:
+---   - match_limit (integer) Set the maximum number of in-progress matches (Default: none).
 ---   - max_start_depth (integer) if non-zero, sets the maximum start depth
 ---     for each match. This is used to prevent traversing too deep into a tree.
----   - match_limit (integer) Set the maximum number of in-progress matches (Default: 256).
---- - all (boolean) When `false` (default `true`), the returned table maps capture IDs to a single
----   (last) node instead of the full list of matching nodes. This option is only for backward
----   compatibility and will be removed in a future release.
 ---
----@return (fun(): integer, table<integer, TSNode[]>, vim.treesitter.query.TSMetadata, TSTree): pattern id, match, metadata, tree
+---@return (fun(): integer, table<integer, TSNode[]>, vim.treesitter.query.TSMetadata, TSTree): pattern-id, match, metadata, tree
 function Query:iter_matches(node, source, start, stop, opts)
   opts = opts or {}
-  opts.match_limit = opts.match_limit or 256
 
   if type(source) == 'number' and source == 0 then
     source = api.nvim_get_current_buf()
@@ -1079,9 +1069,15 @@ function Query:iter_matches(node, source, start, stop, opts)
 
   start, stop = value_or_node_range(start, stop, node)
 
-  -- Copy the tree to ensure it is valid during the entire lifetime of the iterator
-  local tree = node:tree():copy()
-  local cursor = vim._create_ts_querycursor(node, self.query, start, stop, opts)
+  local tree = node:tree()
+  local cursor = vim._create_ts_querycursor(node, self.query, {
+    start_row = start,
+    start_col = 0,
+    end_row = stop,
+    end_col = 0,
+    max_start_depth = opts.max_start_depth,
+    match_limit = opts.match_limit,
+  })
 
   local function iter()
     local match = cursor:next_match()
@@ -1098,23 +1094,12 @@ function Query:iter_matches(node, source, start, stop, opts)
     local metadata = {}
     if processed_pattern then
       local predicates = processed_pattern.predicates
-      if not self:_match_predicates(predicates, pattern_i, captures, source) then
+      if not self._match_predicates(predicates, pattern_i, captures, source) then
         cursor:remove_match(match_id)
         return iter() -- tail call: try next match
       end
       local directives = processed_pattern.directives
       metadata = self:_apply_directives(directives, pattern_i, captures, source)
-    end
-
-    if opts.all == false then
-      -- Convert the match table into the old buggy version for backward
-      -- compatibility. This is slow, but we only do it when the caller explicitly opted into it by
-      -- setting `all` to `false`.
-      local old_match = {} ---@type table<integer, TSNode>
-      for k, v in pairs(captures or {}) do
-        old_match[k] = v[#v]
-      end
-      return pattern_i, old_match, metadata
     end
 
     -- TODO(lewis6991): create a new function that returns {match, metadata}
@@ -1132,7 +1117,7 @@ end
 --- @field langs? string|string[]
 ---
 --- Just clear current lint errors
---- @field clear boolean
+--- @field clear? boolean
 
 --- Lint treesitter queries using installed parser, or clear lint errors.
 ---
@@ -1161,7 +1146,7 @@ end
 --- Use via
 ---
 --- ```lua
---- vim.bo.omnifunc = 'v:lua.vim.treesitter.query.omnifunc'
+--- vim.bo.omnifunc = vim.treesitter.query.omnifunc
 --- ```
 ---
 --- @param findstart 0|1
@@ -1172,11 +1157,12 @@ end
 
 --- Opens a live editor to query the buffer you started from.
 ---
---- Can also be shown with [:EditQuery]().
+--- Can also be shown with the [:EditQuery]() command. `:EditQuery <tab>` completes available
+--- parsers.
 ---
---- If you move the cursor to a capture name ("@foo"), text matching the capture is highlighted in
---- the source buffer. The query editor is a scratch buffer, use `:write` to save it. You can find
---- example queries at `$VIMRUNTIME/queries/`.
+--- If you move the cursor to a capture name ("@foo"), text matching the capture is highlighted
+--- with |hl-DiagnosticVirtualTextHint| in the source buffer. The query editor is a scratch buffer,
+--- use `:write` to save it. You can find example queries at `$VIMRUNTIME/queries/`.
 ---
 --- @param lang? string language to open the query editor for. If omitted, inferred from the current buffer's filetype.
 function M.edit(lang)

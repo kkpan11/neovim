@@ -2,7 +2,7 @@ local api = vim.api
 
 local M = {}
 
----@type table<string,string>
+---@type table<string,string?>
 local ft_to_lang = {
   help = 'vimdoc',
   checkhealth = 'vimdoc',
@@ -41,11 +41,15 @@ function M.get_lang(filetype)
     return ft_to_lang[filetype]
   end
   -- for subfiletypes like html.glimmer use only "main" filetype
-  filetype = vim.split(filetype, '.', { plain = true })[1]
+  filetype = assert(vim.split(filetype, '.', { plain = true })[1])
   return ft_to_lang[filetype] or filetype
 end
 
 ---@deprecated
+---@param lang string
+---@param path? string
+---@param silent? boolean
+---@param symbol_name? string
 function M.require_language(lang, path, silent, symbol_name)
   vim.deprecate(
     'vim.treesitter.language.require_language()',
@@ -131,7 +135,7 @@ function M.add(lang, opts)
     if #paths == 0 then
       return nil, string.format('No parser for language "%s"', lang)
     end
-    path = paths[1]
+    path = assert(paths[1])
   end
 
   local res = loadparser(path, lang, symbol_name)
@@ -184,6 +188,17 @@ end
 function M.inspect(lang)
   M.add(lang)
   return vim._ts_inspect_language(lang)
+end
+
+--- Returns available treesitter languages.
+function M._complete()
+  local parsers = api.nvim_get_runtime_file('parser/*', true)
+  local parser_names_set = {} ---@type table<string, boolean>
+  for _, parser in ipairs(parsers) do
+    local parser_name = vim.fn.fnamemodify(parser, ':t:r')
+    parser_names_set[parser_name] = true
+  end
+  return vim.tbl_keys(parser_names_set)
 end
 
 return M

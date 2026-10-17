@@ -30,9 +30,7 @@
 #include "nvim/types_defs.h"
 #include "nvim/vim_defs.h"
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "cmdhist.c.generated.h"
-#endif
+#include "cmdhist.c.generated.h"
 
 static histentry_T *(history[HIST_COUNT]) = { NULL, NULL, NULL, NULL, NULL };
 static int hisidx[HIST_COUNT] = { -1, -1, -1, -1, -1 };  ///< lastused entry
@@ -603,6 +601,7 @@ void ex_history(exarg_T *eap)
   char *end;
   char *arg = eap->arg;
 
+  msg_ext_set_kind("list_cmd");
   if (hislen == 0) {
     msg(_("'history' option is zero"), 0);
     return;
@@ -616,7 +615,7 @@ void ex_history(exarg_T *eap)
     }
     histype1 = get_histtype(arg, (size_t)(end - arg), false);
     if (histype1 == HIST_INVALID) {
-      if (STRNICMP(arg, "all", end - arg) == 0) {
+      if (STRNICMP(arg, "all", (size_t)(end - arg)) == 0) {
         histype1 = 0;
         histype2 = HIST_COUNT - 1;
       } else {

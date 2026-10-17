@@ -3,6 +3,8 @@
 " Maintainer:		Doug Kearns <dougkearns@gmail.com>
 " Previous Maintainer:	Nikolai Weibull <now@bitwi.se>
 " Last Change:		2024 Sep 19 (simplify keywordprg #15696)
+" 2024 Jul 22 by Vim project (use :hor term #17822)
+" 2026 May 04 by Vim Project: fix typo
 
 if exists("b:did_ftplugin")
   finish
@@ -25,7 +27,7 @@ if exists("loaded_matchit") && !exists("b:match_words")
 endif
 
 if (has("gui_win32") || has("gui_gtk")) && !exists("b:browsefilter")
-  let b:browsefilter = "Readline Intialization Files (inputrc, .inputrc)\tinputrc;*.inputrc\n"
+  let b:browsefilter = "Readline Initialization Files (inputrc, .inputrc)\tinputrc;*.inputrc\n"
   if has("win32")
     let b:browsefilter ..= "All Files (*.*)\t*\n"
   else
@@ -36,7 +38,7 @@ endif
 
 if has('unix') && executable('less') && exists(':terminal') == 2
   command -buffer -nargs=1 ReadlineKeywordPrg
-        \ silent exe 'term ' . 'env LESS= MANPAGER="less --pattern=''' . escape('^\s+' . <q-args> . '\b', '\') . ''' --hilite-search" man ' . '3 readline'
+        \ silent exe 'hor term ' . 'env LESS= MANPAGER="less --pattern=''' . escape('^\s+' . <q-args> . '\b', '\') . ''' --hilite-search" man ' . '3 readline'
   setlocal iskeyword+=-
   setlocal keywordprg=:ReadlineKeywordPrg
   let b:undo_ftplugin .= '| setlocal keywordprg< iskeyword< | sil! delc -buffer ReadlineKeywordPrg'

@@ -4,6 +4,7 @@ local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
+local describe, it, before_each = t.describe, t.it, t.before_each
 local clear, feed, insert = n.clear, n.feed, n.insert
 local expect, eq, eval, source = n.expect, t.eq, n.eval, n.source
 local command = n.command
@@ -144,7 +145,11 @@ describe('clipboard', function()
 
   it('`:redir @+>` with invalid g:clipboard shows exactly one error #7184', function()
     command("let g:clipboard = 'bogus'")
-    command('redir @+> | :silent echo system("cat CONTRIBUTING.md") | redir END')
+    n.exec([[
+      redir @+>
+        silent echo system("cat test/functional/fixtures/tty-test.c")
+      redir END
+    ]])
     screen:expect([[
       ^                                                                        |
       {1:~                                                                       }|*2
@@ -301,8 +306,12 @@ describe('clipboard (with fake clipboard.vim)', function()
 
   it('`:redir @+>` invokes clipboard once-per-message', function()
     eq(0, eval('g:clip_called_set'))
-    command('redir @+> | :silent echo system("cat CONTRIBUTING.md") | redir END')
-    -- Assuming CONTRIBUTING.md has >100 lines.
+    n.exec([[
+      redir @+>
+        silent echo system("cat test/functional/fixtures/tty-test.c")
+      redir END
+    ]])
+    -- Assuming tty-test.c has >100 lines.
     assert(eval('g:clip_called_set') > 100)
   end)
 
@@ -311,7 +320,11 @@ describe('clipboard (with fake clipboard.vim)', function()
     -- NOT propagate to the clipboard. This is consistent with Vim.
     command('set clipboard=unnamedplus')
     eq(0, eval('g:clip_called_set'))
-    command('redir @"> | :silent echo system("cat CONTRIBUTING.md") | redir END')
+    n.exec([[
+      redir @">
+        silent echo system("cat test/functional/fixtures/tty-test.c")
+      redir END
+    ]])
     eq(0, eval('g:clip_called_set'))
   end)
 
@@ -537,7 +550,7 @@ describe('clipboard (with fake clipboard.vim)', function()
       eq('textstar', api.nvim_get_current_line())
     end)
 
-    it('Block paste works correctly', function()
+    it('block paste works correctly', function()
       insert([[
         aabbcc
         ddeeff
@@ -549,6 +562,26 @@ describe('clipboard (with fake clipboard.vim)', function()
         aabbaabbcc
         ddeeddeeff
       ]])
+    end)
+
+    it('block paste computes block width correctly #35034', function()
+      insert('あいうえお')
+      feed('0<C-V>ly')
+      feed('P')
+      expect('あいあいうえお')
+      feed('A\nxxx\nxx<Esc>')
+      feed('0<C-V>kkly')
+      feed('P')
+      expect([[
+        あいあいあいうえお
+        xxx xxx
+        xx  xx]])
+      feed('G0<C-V>ky')
+      feed('P')
+      expect([[
+        あいあいあいうえお
+        xxxx xxx
+        xxx  xx]])
     end)
   end)
 

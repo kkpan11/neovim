@@ -2,6 +2,7 @@ local t = require('test.testutil')
 local n = require('test.functional.testnvim')()
 local Screen = require('test.functional.ui.screen')
 
+local describe, it, before_each, after_each = t.describe, t.it, t.before_each, t.after_each
 local eq = t.eq
 local exec_lua = n.exec_lua
 local clear = n.clear
@@ -136,10 +137,11 @@ describe('vim.ui_attach', function()
       {
         'msg_history_show',
         {
-          { 'echomsg', { { 0, 'message1', 0 } } },
-          { 'lua_print', { { 0, 'message2', 0 } } },
-          { 'echomsg', { { 0, 'message3', 0 } } },
+          { 'echomsg', { { 0, 'message1', 0 } }, false },
+          { 'lua_print', { { 0, 'message2', 0 } }, false },
+          { 'echomsg', { { 0, 'message3', 0 } }, false },
         },
+        false,
       },
     }, actual, vim.inspect(actual))
   end)
@@ -190,49 +192,32 @@ describe('vim.ui_attach', function()
         ^1                                       |
         {1:~                                       }|*4
       ]],
-      cmdline = { {
-        content = { { '' } },
-        firstc = ':',
-        pos = 0,
-      } },
+      cmdline = { { content = { { '' } }, firstc = ':', pos = 0 } },
     })
-    feed('version<CR><CR>v<Esc>')
+    feed('version<CR>')
     screen:expect({
       grid = [[
         ^2                                       |
         {1:~                                       }|*4
       ]],
-      cmdline = { { abort = false } },
+      condition = function()
+        eq('list_cmd', screen.messages[1].kind)
+        screen.messages = {} -- Ignore the build dependent :version content
+      end,
     })
-    feed([[:call confirm("Save changes?", "&Yes\n&No\n&Cancel")<CR>]])
+    feed([[v<Esc>:call confirm("Save changes?", "&Yes\n&No\n&Cancel")<CR>]])
     screen:expect({
       grid = [[
         ^4                                       |
         {1:~                                       }|*4
       ]],
       cmdline = {
-        {
-          content = { { '' } },
-          hl_id = 10,
-          pos = 0,
-          prompt = '[Y]es, (N)o, (C)ancel: ',
-        },
+        { content = { { '' } }, hl = 'MoreMsg', pos = 0, prompt = '[Y]es, (N)o, (C)ancel: ' },
       },
-      messages = {
-        {
-          content = { { '\nSave changes?\n', 6, 10 } },
-          kind = 'confirm',
-        },
-      },
+      messages = { { content = { { 'Save changes?', 6, 'MoreMsg' } }, kind = 'confirm' } },
     })
     feed('n')
-    screen:expect({
-      grid = [[
-        ^4                                       |
-        {1:~                                       }|*4
-      ]],
-      cmdline = { { abort = false } },
-    })
+    screen:expect_unchanged()
   end)
 
   it("preserved 'incsearch/command' screen state after :redraw from ext_cmdline", function()
@@ -252,37 +237,31 @@ describe('vim.ui_attach', function()
     ]])
     -- Updates a cmdline window
     feed(':cmdline')
-    screen:expect({
-      grid = [[
-        cmdline                                 |
-        {2:cmdline [+]                             }|
-        fooba^r                                  |
-        {3:[No Name] [+]                           }|
-                                                |
-      ]],
-    })
+    screen:expect([[
+      cmdline                                 |
+      {2:cmdline [+]                             }|
+      fooba^r                                  |
+      {3:[No Name] [+]                           }|
+                                              |
+    ]])
     -- Does not clear 'incsearch' highlighting
     feed('<Esc>/foo')
-    screen:expect({
-      grid = [[
-        foo                                     |
-        {2:cmdline [+]                             }|
-        {2:foo}ba^r                                  |
-        {3:[No Name] [+]                           }|
-                                                |
-      ]],
-    })
+    screen:expect([[
+      foo                                     |
+      {2:cmdline [+]                             }|
+      {2:foo}ba^r                                  |
+      {3:[No Name] [+]                           }|
+                                              |
+    ]])
     -- Shows new cmdline state during 'inccommand'
     feed('<Esc>:%s/bar/baz')
-    screen:expect({
-      grid = [[
-        %s/bar/baz                              |
-        {2:cmdline [+]                             }|
-        foo{10:ba^z}                                  |
-        {3:[No Name] [+]                           }|
-                                                |
-      ]],
-    })
+    screen:expect([[
+      %s/bar/baz                              |
+      {2:cmdline [+]                             }|
+      foo{10:ba^z}                                  |
+      {3:[No Name] [+]                           }|
+                                              |
+    ]])
   end)
 
   it('msg_show in fast context', function()
@@ -309,10 +288,9 @@ describe('vim.ui_attach', function()
         lled in a fast event context            |
         {1:~                                       }|
       ]],
-      cmdline = { { abort = false } },
       messages = {
         {
-          content = { { 'E122: Function Foo already exists, add ! to replace it', 9, 6 } },
+          content = { { 'E122: Function Foo already exists, add ! to replace it', 9, 'ErrorMsg' } },
           history = true,
           kind = 'emsg',
         },
@@ -356,11 +334,11 @@ describe('vim.ui_attach', function()
       2                                       |
       3                                       |
       4  :call bufadd^(                        |
-      5       {12: bufadd(         }{100: }              |
-      6        bufexists(      {100: }              |
-      7        buffer_exists(  {12: }              |
-      8        buffer_name(    {12: }              |
-      9        buffer_number(  {12: }              |
+      5       {12: bufadd(        }{100: }               |
+      6        bufexists(     {100: }               |
+      7        buffer_exists( {12: }               |
+      8        buffer_name(   {12: }               |
+      9        buffer_number( {12: }               |
                                               |
     ]])
     exec_lua([[
@@ -378,41 +356,66 @@ describe('vim.ui_attach', function()
       2                                       |
       3                                       |
       4                                       |
-      5       {12: bufadd(         }{100: }              |
-      6        bufexists(      {100: }              |
-      7        buffer_exists(  {12: }              |
-      8        buffer_name(    {12: }              |
-      9        buffer_number(  {12: }              |
+      5       {12: bufadd(        }{100: }               |
+      6        bufexists(     {100: }               |
+      7        buffer_exists( {12: }               |
+      8        buffer_name(   {12: }               |
+      9        buffer_number( {12: }               |
       :call bufadd^(                           |
     ]])
     feed('<tab>')
     screen:expect([[
-      1     bufadd(         {100: }                 |
-      2    {12: bufexists(      }{100: }                 |
-      3     buffer_exists(  {100: }                 |
-      4     buffer_name(    {100: }                 |
-      5     buffer_number(  {100: }                 |
-      6     buflisted(      {100: }                 |
-      7     bufload(        {12: }                 |
-      8     bufloaded(      {12: }                 |
-      9     bufname(        {12: }                 |
+      1     bufadd(        {100: }                  |
+      2    {12: bufexists(     }{100: }                  |
+      3     buffer_exists( {100: }                  |
+      4     buffer_name(   {100: }                  |
+      5     buffer_number( {100: }                  |
+      6     buflisted(     {100: }                  |
+      7     bufload(       {12: }                  |
+      8     bufloaded(     {12: }                  |
+      9     bufname(       {12: }                  |
       :call bufexists^(                        |
     ]])
     -- Test different offset (e.g. for custom prompt)
     exec_lua('vim.api.nvim_win_set_config(_G.win, { _cmdline_offset = 9 })')
     feed('<Esc>:call buf<Tab>')
     screen:expect([[
-      1             {12: bufadd(         }{100: }        |
-      2              bufexists(      {100: }        |
-      3              buffer_exists(  {100: }        |
-      4              buffer_name(    {100: }        |
-      5              buffer_number(  {100: }        |
-      6              buflisted(      {100: }        |
-      7              bufload(        {12: }        |
-      8              bufloaded(      {12: }        |
-      9              bufname(        {12: }        |
+      1             {12: bufadd(        }{100: }         |
+      2              bufexists(     {100: }         |
+      3              buffer_exists( {100: }         |
+      4              buffer_name(   {100: }         |
+      5              buffer_number( {100: }         |
+      6              buflisted(     {100: }         |
+      7              bufload(       {12: }         |
+      8              bufloaded(     {12: }         |
+      9              bufname(       {12: }         |
       Excommand:call bufadd^(                  |
     ]])
+    -- _cmdline_offset remains set after being turned into a split.
+    exec_lua(function()
+      vim.fn.win_execute(_G.win, 'wincmd J')
+    end)
+    feed('<Tab>') -- Was a signed int overflow; offset was INT_MAX despite cmdline_win being set.
+    eq(9, exec_lua('return vim.api.nvim_win_get_config(_G.win)._cmdline_offset'))
+    -- No crash after _cmdline_offset window is closed #35584.
+    exec_lua(function()
+      vim.ui_detach(_G.ns)
+      vim.api.nvim_win_close(_G.win, true)
+    end)
+    feed('<Esc>:<Tab>')
+    n.assert_alive()
+  end)
+
+  it("does not crash with :norm 'showcmd' from shell message callback #38233", function()
+    exec_lua(function()
+      vim.ui_attach(vim.api.nvim_create_namespace(''), { ext_messages = true }, function(event)
+        if event == 'msg_show' then
+          vim.api.nvim_command('norm! G')
+        end
+      end)
+    end)
+    n.command('set showcmd | !echo "foo"')
+    n.assert_alive()
   end)
 end)
 
@@ -440,104 +443,55 @@ describe('vim.ui_attach', function()
   end)
 
   it('detaches after excessive errors', function()
-    local screen = Screen.new(86, 10)
+    local screen = Screen.new(66, 10)
     screen:add_extra_attr_ids({ [100] = { bold = true, foreground = Screen.colors.SeaGreen } })
     exec_lua([[
       vim.ui_attach(vim.api.nvim_create_namespace(''), { ext_messages = true }, function(ev)
-        if ev:find('msg') then
-          vim.api.nvim_buf_set_lines(0, -2, -1, false, { err[1] })
+        if ev == 'msg_show' then
+          error('foo')
         end
       end)
     ]])
-    local s1 = [[
-      ^                                                                                      |
-      {1:~                                                                                     }|*9
-    ]]
-    screen:expect(s1)
-    feed('Q<CR>')
+    feed('@@')
     screen:expect({
-      grid = s1,
-      messages = {
-        {
-          content = { { "E354: Invalid register name: '^@'", 9, 6 } },
-          history = true,
-          kind = 'emsg',
-        },
-        {
-          content = {
-            {
-              'Lua callback:\n[string "<nvim>"]:3: attempt to index global \'err\' (a nil value)\nstack traceback:\n\t[string "<nvim>"]:3: in function <[string "<nvim>"]:1>',
-              9,
-              6,
-            },
-          },
-          history = true,
-          kind = 'lua_error',
-        },
-        {
-          content = { { 'Press ENTER or type command to continue', 100, 18 } },
-          kind = 'return_prompt',
-        },
-      },
+      grid = [[
+                                                                          |
+        {1:~                                                                 }|*2
+        {3:                                                                  }|
+        {9:Error in "msg_show" UI event handler (ns=(UNKNOWN PLUGIN)):}       |
+        {9:Lua: [string "<nvim>"]:3: foo}                                     |
+        {9:stack traceback:}                                                  |
+        {9:        [C]: in function 'error'}                                  |
+        {9:        [string "<nvim>"]:3: in function <[string "<nvim>"]:1>}    |
+        {100:Press ENTER or type command to continue}^                           |
+      ]],
+      condition = function()
+        screen.messages = {}
+      end,
     })
-    feed('<CR>:messages<CR>')
-    screen:expect([[
-      {9:Error in "msg_show" UI event handler (ns=(UNKNOWN PLUGIN)):}                           |
-      {9:Lua: [string "<nvim>"]:3: attempt to index global 'err' (a nil value)}                 |
-      {9:stack traceback:}                                                                      |
-      {9:        [string "<nvim>"]:3: in function <[string "<nvim>"]:1>}                        |
-      {9:Error in "msg_clear" UI event handler (ns=(UNKNOWN PLUGIN)):}                          |
-      {9:Lua: [string "<nvim>"]:3: attempt to index global 'err' (a nil value)}                 |
-      {9:stack traceback:}                                                                      |
-      {9:        [string "<nvim>"]:3: in function <[string "<nvim>"]:1>}                        |
-      {9:Excessive errors in vim.ui_attach() callback (ns=(UNKNOWN PLUGIN))}                    |
-      {100:Press ENTER or type command to continue}^                                               |
-    ]])
-    feed('<CR>')
+    feed('<Esc>')
 
     -- Also when scheduled
     exec_lua([[
-      vim.ui_attach(vim.api.nvim_create_namespace(''), { ext_messages = true }, function()
-        vim.schedule(function() vim.api.nvim_buf_set_lines(0, -2, -1, false, { err[1] }) end)
+      vim.ui_attach(vim.api.nvim_create_namespace(''), { ext_messages = true }, function(ev)
+        if ev == 'msg_show' then
+          vim.schedule(function() error('foo') end)
+        end
       end)
     ]])
+    feed('@@')
     screen:expect({
-      grid = s1,
-      messages = {
-        {
-          content = {
-            {
-              'vim.schedule callback: [string "<nvim>"]:2: attempt to index global \'err\' (a nil value)\nstack traceback:\n\t[string "<nvim>"]:2: in function <[string "<nvim>"]:2>',
-              9,
-              6,
-            },
-          },
-          history = true,
-          kind = 'lua_error',
-        },
-        {
-          content = {
-            {
-              'vim.schedule callback: [string "<nvim>"]:2: attempt to index global \'err\' (a nil value)\nstack traceback:\n\t[string "<nvim>"]:2: in function <[string "<nvim>"]:2>',
-              9,
-              6,
-            },
-          },
-          history = true,
-          kind = 'lua_error',
-        },
-        {
-          content = { { 'Press ENTER or type command to continue', 100, 18 } },
-          kind = 'return_prompt',
-        },
-      },
+      grid = [[
+                                                                          |
+        {1:~                                                                 }|*6
+        {3:                                                                  }|
+        {9:Excessive errors in vim.ui_attach() callback (ns=(UNKNOWN PLUGIN))}|
+        {100:Press ENTER or type command to continue}^                           |
+      ]],
+      condition = function()
+        screen.messages = {}
+      end,
     })
-    feed('<Esc>:1messages clear<cr>:messages<CR>')
-    screen:expect([[
-      ^                                                                                      |
-      {1:~                                                                                     }|*8
-      {9:Excessive errors in vim.ui_attach() callback (ns=(UNKNOWN PLUGIN))}                    |
-    ]])
   end)
 
   it('sourcing invalid file does not crash #32166', function()

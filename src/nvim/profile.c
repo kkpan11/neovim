@@ -12,9 +12,9 @@
 #include "nvim/cmdexpand_defs.h"
 #include "nvim/debugger.h"
 #include "nvim/errors.h"
-#include "nvim/eval.h"
 #include "nvim/eval/typval_defs.h"
 #include "nvim/eval/userfunc.h"
+#include "nvim/eval/vars.h"
 #include "nvim/ex_cmds_defs.h"
 #include "nvim/fileio.h"
 #include "nvim/garray.h"
@@ -33,9 +33,7 @@
 #include "nvim/runtime.h"
 #include "nvim/types_defs.h"
 
-#ifdef INCLUDE_GENERATED_DECLARATIONS
-# include "profile.c.generated.h"
-#endif
+#include "profile.c.generated.h"
 
 /// Struct used in sn_prl_ga for every line of a script.
 typedef struct {
@@ -75,7 +73,7 @@ const char *profile_msg(proftime_T tm) FUNC_ATTR_WARN_UNUSED_RESULT
 {
   static char buf[50];
   snprintf(buf, sizeof(buf), "%10.6lf",
-           (double)profile_signed(tm) / 1000000000.0);
+           (double)profile_signed(tm) / NS_PER_SEC);
   return buf;
 }
 
@@ -171,7 +169,7 @@ proftime_T profile_self(proftime_T self, proftime_T total, proftime_T children)
 /// Gets the current waittime.
 ///
 /// @return the current waittime
-proftime_T profile_get_wait(void) FUNC_ATTR_PURE
+static proftime_T profile_get_wait(void) FUNC_ATTR_PURE
 {
   return prof_wait_time;
 }
@@ -194,7 +192,7 @@ proftime_T profile_sub_wait(proftime_T tm, proftime_T tma) FUNC_ATTR_PURE
 /// Checks if time `tm1` is equal to `tm2`.
 ///
 /// @return true if `tm1` == `tm2`
-bool profile_equal(proftime_T tm1, proftime_T tm2) FUNC_ATTR_CONST
+static bool profile_equal(proftime_T tm1, proftime_T tm2) FUNC_ATTR_CONST
 {
   return tm1 == tm2;
 }
@@ -297,7 +295,7 @@ void ex_profile(exarg_T *eap)
 
   if (len == 5 && strncmp(eap->arg, "start", 5) == 0 && *e != NUL) {
     xfree(profile_fname);
-    profile_fname = expand_env_save_opt(e, true);
+    profile_fname = expand_env_save_opt(e, true, NULL);
     do_profiling = PROF_YES;
     profile_set_wait(profile_zero());
     set_vim_var_nr(VV_PROFILING, 1);

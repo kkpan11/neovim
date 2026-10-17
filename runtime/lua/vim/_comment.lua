@@ -3,12 +3,12 @@
 ---@field right string Right part of comment
 
 --- Get 'commentstring' at cursor
----@param ref_position integer[]
+---@param ref_position [integer,integer]
 ---@return string
 local function get_commentstring(ref_position)
   local buf_cs = vim.bo.commentstring
 
-  local ts_parser = vim.treesitter.get_parser(0, '', { error = false })
+  local ts_parser = vim.treesitter.get_parser(0, '')
   if not ts_parser then
     return buf_cs
   end
@@ -20,7 +20,7 @@ local function get_commentstring(ref_position)
 
   -- Get 'commentstring' from tree-sitter captures' metadata.
   -- Traverse backwards to prefer narrower captures.
-  local caps = vim.treesitter.get_captures_at_pos(0, row, col)
+  local caps = vim.treesitter.get_captures(0, { row, col })
   for i = #caps, 1, -1 do
     local id, metadata = caps[i].id, caps[i].metadata
     local md_cms = metadata['bo.commentstring'] or metadata[id] and metadata[id]['bo.commentstring']
@@ -38,6 +38,7 @@ local function get_commentstring(ref_position)
   local ts_cs, res_level = nil, 0
 
   ---@param lang_tree vim.treesitter.LanguageTree
+  ---@param level integer
   local function traverse(lang_tree, level)
     if not lang_tree:contains(ref_range) then
       return
@@ -62,13 +63,13 @@ local function get_commentstring(ref_position)
 end
 
 --- Compute comment parts from 'commentstring'
----@param ref_position integer[]
+---@param ref_position [integer,integer]
 ---@return vim._comment.Parts
 local function get_comment_parts(ref_position)
   local cs = get_commentstring(ref_position)
 
   if cs == nil or cs == '' then
-    vim.api.nvim_echo({ { "Option 'commentstring' is empty.", 'WarningMsg' } }, true, {})
+    vim.api.nvim_echo({ { "Option 'commentstring' is empty.", 'WarningMsg' } }, true)
     return { left = '', right = '' }
   end
 
@@ -78,6 +79,7 @@ local function get_comment_parts(ref_position)
 
   -- Structure of 'commentstring': <left part> <%s> <right part>
   local left, right = cs:match('^(.-)%%s(.-)$')
+  assert(left and right)
   return { left = left, right = right }
 end
 
@@ -112,6 +114,7 @@ local function get_lines_info(lines, parts)
   for _, l in ipairs(lines) do
     -- Update lines indent: minimum of all indents except blank lines
     local _, indent_width_cur, indent_cur = l:find('^(%s*)')
+    assert(indent_width_cur and indent_cur)
 
     -- Ignore blank lines completely when making a decision
     if indent_width_cur < l:len() then
@@ -146,7 +149,7 @@ end
 ---@return fun(line: string): string
 local function make_comment_function(parts, indent)
   local prefix, nonindent_start, suffix = indent .. parts.left, indent:len() + 1, parts.right
-  local blank_comment = indent .. vim.trim(parts.left) .. vim.trim(parts.right)
+  local blank_comment = indent .. vim.trim(parts.left) .. vim.trim(suffix)
 
   return function(line)
     if is_blank(line) then
@@ -188,7 +191,7 @@ end
 --- Comment/uncomment buffer range
 ---@param line_start integer
 ---@param line_end integer
----@param ref_position? integer[]
+---@param ref_position? [integer, integer]
 local function toggle_lines(line_start, line_end, ref_position)
   ref_position = ref_position or { line_start, 0 }
   local parts = get_comment_parts(ref_position)
@@ -219,7 +222,7 @@ local function operator(mode)
   -- Used without arguments as part of expression mapping. Otherwise it is
   -- called as 'operatorfunc'.
   if mode == nil then
-    vim.o.operatorfunc = "v:lua.require'vim._comment'.operator"
+    vim.o.operatorfunc = operator
     return 'g@'
   end
 

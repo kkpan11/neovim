@@ -3,6 +3,8 @@
 " Previous Maintainer:  Nikolai Weibull <now@bitwi.se>
 " Last Change:          2025 Apr 08
 " 2025 Apr 08 by Vim project (set 'omnifunc' and 'iskeyword', #17073)
+" 2025 Aug 08 by Vim project (unset comment options, #17889)
+" 2026 Apr 26 by Vim project (make HelpComplete global, #20024)
 
 if exists("b:did_ftplugin")
   finish
@@ -12,16 +14,18 @@ let b:did_ftplugin = 1
 let s:cpo_save = &cpo
 set cpo&vim
 
-let b:undo_ftplugin = "setl isk< fo< tw< cole< cocu< keywordprg< omnifunc<"
+let b:undo_ftplugin = "setl isk< fo< tw< cole< cocu< keywordprg< omnifunc< comments< cms<"
 
-setlocal formatoptions+=tcroql textwidth=78 keywordprg=:help omnifunc=s:HelpComplete
+setl comments= cms=
+
+setlocal formatoptions+=tcroql textwidth=78 keywordprg=:help! omnifunc=HelpComplete
 let &l:iskeyword='!-~,^*,^|,^",192-255'
 if has("conceal")
   setlocal cole=2 cocu=nc
 endif
 
-if !exists('*s:HelpComplete')
-  func s:HelpComplete(findstart, base)
+if !exists('*HelpComplete')
+  func HelpComplete(findstart, base)
     if a:findstart
       let colnr = col('.') - 1 " Get the column number before the cursor
       let line = getline('.')
